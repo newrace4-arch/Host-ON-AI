@@ -1,6 +1,24 @@
-# 3rd Host AI — DB 최종 명세서 (v1.0)
+# 3rd Host AI — DB 최종 명세서 (v1.1)
 
 > 브랜드명: **Host ON (AI)** (내부 코드/폴더명은 3rd_host_ai 유지)
+>
+> **v1.0 → v1.1 변경사항**: 아래 3개 정합성 문제 수정 후 Schema Freeze 대상으로
+> 재확정
+> 1. `bookable_unit_type` CHECK 관련 서술을 기술적으로 정확하게 수정
+>    (DB CHECK는 room/bed 내부 형태만 검증, Property와의 교차일치는 앱 책임)
+> 2. Action Center "체크인 N시간 전" 규칙 실현을 위해 PROPERTIES에
+>    `checkin_time`/`checkout_time` 필드 추가
+> 3. 청소 완료 판정에 VERIFIED 상태 포함하도록 Action Center 쿼리 수정
+>
+> [문서 변경관리 규칙]
+> 1. 본 문서를 DB Schema의 Single Source of Truth로 한다.
+> 2. DB 구조 변경은 본 문서를 먼저 수정한다.
+> 3. ERD/SQLAlchemy/Alembic/API Contract/Excel 체크리스트는 본 문서 변경
+>    후 동기화한다. Excel을 먼저 고치고 본 문서를 나중에 맞추는 순서는 금지.
+> 4. 구현 코드와 본 문서가 다르면 본 문서를 기준으로 차이를 해결한다.
+> 5. Schema Freeze 이후 변경은 반드시 버전(v1.1→v1.2 등)과 변경 사유를 기록한다.
+> 6. 단순 구현 버그 수정은 문서 변경 대상이 아니며, 스키마·제약조건·필드·
+>    관계가 바뀔 때만 문서를 갱신한다.
 >
 > 9/1 착수 전 확정할 최종 리스트 및 아래 12개 항목은 이미 이 문서에
 > 전부 반영되어 있습니다. 실행 체크리스트(엑셀)와의 정합성 기준 문서는
@@ -15,7 +33,7 @@
 
 | # | 결정 사항 | 채택 근거 |
 |---|---|---|
-| 1 | `bookable_unit_type` ↔ `room_id`/`bed_id` 조합은 CHECK 제약으로 DB가 강제 | 공통 |
+| 1 | `bookable_unit_type` ↔ `room_id`/`bed_id`의 **내부 형태**(shape) 일치는 Reservation CHECK로 DB가 강제. 단, `bookable_unit_type`은 PROPERTIES에 있고 room_id/bed_id는 RESERVATIONS에 있어 **PostgreSQL 일반 CHECK로는 테이블을 넘나드는 검증이 불가능** — 이 교차일치는 애플리케이션 트랜잭션 책임 | 공통, v1.1에서 정정 |
 | 2 | Room/Bed가 실제로 해당 Property/Room 소속인지 **계층적 복합 FK**로 보장 | doc19 (doc20엔 없던 항목) |
 | 3 | 예약 겹침 방지는 PROPERTY/ROOM/BED **단위별로 EXCLUDE 3개 분리** | doc19 채택, doc20의 `COALESCE(room_id,0)` 방식은 **폐기** — 0을 "값 없음"과 "진짜 0번 ID"로 구분 못 해 데이터 오염 위험 |
 | 4 | PROPERTY↔ROOM/BED 간 **교차 충돌은 애플리케이션 트랜잭션 검증**으로 방어 | doc19 |
@@ -90,6 +108,12 @@ CREATE TABLE hosts (
 );
 ```
 
+> **phone 필드 미포함 결정(확정)**: 현재 설계상 호스트 본인에게 전화/문자를
+> 보내는 기능이 없어 실사용처가 없음. "일단 있으면 좋을 것 같아서" 넣는
+> 필드는 범위확장의 시작점이 되므로 배제. 2차에서 실제 필요(예: 문자알림을
+> 호스트 본인에게도 발송)가 생기면 `ALTER TABLE hosts ADD COLUMN phone`으로
+> 언제든 추가 가능 — 지금 안 넣는다고 나중에 못 넣는 게 아님.
+
 ### 2.2 PROPERTIES
 
 ```sql
@@ -102,11 +126,20 @@ CREATE TABLE properties (
   address            VARCHAR(255),
   base_price         INTEGER NOT NULL DEFAULT 0,
   lower_bound_price  INTEGER,
+  checkin_time       TIME NOT NULL DEFAULT '15:00',   -- v1.1 추가: Action Center 시간규칙용
+  checkout_time      TIME NOT NULL DEFAULT '11:00',   -- v1.1 추가: Action Center 시간규칙용
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_properties_host ON properties(host_id);
 ```
+
+> **v1.1 추가 이유**: `RESERVATIONS.check_in`은 DATE 타입이라 "몇 시"인지
+> 알 수 없다. Action Center의 "체크인 2시간 전" 같은 규칙은 실제로는
+> `check_in + checkin_time`(날짜+숙소별 체크인 시각)을 합쳐야 계산 가능하다.
+> 체크인 시각을 예약마다 따로 저장하지 않고 **숙소(Property) 단위 정책**으로
+> 둔 이유는 실제 운영에서 체크인 시각은 예약별이 아니라 숙소 운영정책으로
+> 고정되는 경우가 대부분이기 때문이다(예: 오후 3시 체크인).
 
 ### 2.3 ROOMS
 
@@ -117,11 +150,22 @@ CREATE TABLE rooms (
   room_name    VARCHAR(100) NOT NULL,
   capacity     INTEGER,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (room_id, property_id)   -- Reservation의 계층적 복합 FK를 위한 필수 UNIQUE
+  -- (property_id, room_id): room_id가 이미 PK라 이 자체로 "중복방지" 효과는 없음.
+  --   목적은 따로 있음 — Reservation이 (room_id, property_id) 복합FK로 이 조합을
+  --   참조할 때 "이 room이 정말 이 property 소속인가"를 DB가 검증하기 위한
+  --   후보키(candidate key)로만 사용. 반드시 유지할 것.
+  UNIQUE (room_id, property_id),
+  -- 실제 게스트가 보는 객실명("101호" 등)이 같은 숙소 안에서 중복되지 않도록
+  -- 하는 운영 무결성용 제약. 위 UNIQUE와 목적이 다르므로 둘 다 필요함.
+  UNIQUE (property_id, room_name)
 );
 
 CREATE INDEX idx_rooms_property ON rooms(property_id);
 ```
+
+> **한 문장 요약**: `UNIQUE(room_id, property_id)`는 "미래 Reservation 참조용",
+> `UNIQUE(property_id, room_name)`는 "지금 당장 같은 숙소 안 객실명 중복 방지용"
+> — 목적이 다른 두 제약이니 하나로 합치거나 둘 중 하나를 빼지 말 것.
 
 ### 2.4 BEDS
 
@@ -131,7 +175,10 @@ CREATE TABLE beds (
   room_id     BIGINT NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
   bed_label   VARCHAR(50) NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (bed_id, room_id)        -- Reservation의 계층적 복합 FK를 위한 필수 UNIQUE
+  -- ROOMS와 동일한 이유: 미래 Reservation 복합FK 참조용 후보키
+  UNIQUE (bed_id, room_id),
+  -- 같은 객실 안에서 침대 라벨("A","B" 등) 중복 방지용 운영 무결성 제약
+  UNIQUE (room_id, bed_label)
 );
 
 CREATE INDEX idx_beds_room ON beds(room_id);
@@ -191,7 +238,13 @@ CREATE TABLE reservations (
   FOREIGN KEY (channel_connection_id, property_id)
     REFERENCES channel_connections(connection_id, property_id),
 
-  -- (B) bookable_unit_type과 실제 FK 조합 일치 검증
+  -- (B) room_id/bed_id 조합의 "내부 형태(shape)"가 유효한 3가지 패턴 중
+  --     하나인지만 검증. 주의: 이 CHECK는 PROPERTIES.bookable_unit_type
+  --     값과 실제로 일치하는지는 검증하지 못한다(PostgreSQL 일반 CHECK는
+  --     다른 테이블을 참조할 수 없음). 예: bookable_unit_type=PROPERTY인데
+  --     room_id가 채워진 예약도 이 CHECK만으로는 걸러지지 않는다.
+  --     → Property.bookable_unit_type과의 교차일치는 반드시 애플리케이션
+  --       트랜잭션(예약 생성 서비스 레이어)에서 별도 검증할 것.
   CHECK (
     (room_id IS NULL AND bed_id IS NULL) OR         -- PROPERTY 단위
     (room_id IS NOT NULL AND bed_id IS NULL) OR      -- ROOM 단위
@@ -439,13 +492,18 @@ CREATE INDEX idx_checklist_items_property ON checklist_items(property_id);
 
 ```sql
 -- 예: "체크인 2시간 전인데 청소가 완료되지 않은 긴급 건" 조회
+-- v1.1: check_in(DATE)만으로는 "몇 시"를 알 수 없어 property의 checkin_time과
+--   합산. 청소 "완료"는 COMPLETED 또는 VERIFIED 둘 다 정상 종료로 취급
+--   (VERIFIED는 COMPLETED보다 더 진행된 상태이므로 COMPLETED만 완료로
+--   보면 VERIFIED가 잘못 긴급건으로 잡히는 버그가 생김)
 SELECT r.reservation_id, r.property_id, r.guest_name, r.check_in, c.task_status
 FROM reservations r
+JOIN properties p ON p.property_id = r.property_id
 JOIN cleaning_tasks c ON r.reservation_id = c.reservation_id
 WHERE r.property_id = :target_property_id
   AND r.reservation_status = 'CONFIRMED'
-  AND r.check_in BETWEEN NOW() AND NOW() + INTERVAL '2 hours'
-  AND c.task_status <> 'COMPLETED';
+  AND (r.check_in + p.checkin_time) BETWEEN NOW() AND NOW() + INTERVAL '2 hours'
+  AND c.task_status NOT IN ('COMPLETED', 'VERIFIED');
 ```
 
 조인 1회로 충분하며, 위 인덱스(`idx_reservations_dates`, `idx_cleaning_tasks_property_status`)로
@@ -455,6 +513,14 @@ WHERE r.property_id = :target_property_id
 
 ## 4. 문서화가 필요한 정책 (코드 주석/README에 반드시 남길 것)
 
+0. **[v1.1 추가] DB가 보장하는 것과 애플리케이션이 보장하는 것을 명확히 구분**:
+   - DB 보장: room이 실제 해당 property 소속인가 / bed가 실제 해당 room
+     소속인가 / channel이 실제 해당 property 소속인가 / room·bed 조합
+     자체의 내부 형태가 유효한가 / 예약기간 중복 여부(EXCLUDE)
+   - 애플리케이션 보장: **Property.bookable_unit_type과 실제 예약의
+     room/bed 사용형태가 일치하는가**(PostgreSQL CHECK는 테이블을 넘나들며
+     검증할 수 없어 DB가 대신할 수 없음) — 예약 생성 서비스 레이어에서
+     반드시 검증 로직 구현
 1. **`ACTION_ITEMS.risk_level`은 법적·안전 위험 판단이 아니라 운영 처리 우선순위**입니다.
    `RED_NOW`=체크인 임박+청소 미완료 등 시간·상태 기준 규칙일 뿐, AI가 게스트 위험도를
    판단하는 것이 아닙니다.
