@@ -1,0 +1,98 @@
+# ==============================
+# 환경변수 / 시크릿 (절대 커밋 금지)
+# ==============================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production
+.env.production.local
+*.pem
+*.key
+credentials.json
+service-account*.json
+secrets/
+
+# ==============================
+# Python / FastAPI 백엔드
+# ==============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+
+# Alembic — versions 폴더는 반드시 커밋! DB만 제외
+alembic/versions/__pycache__/
+
+# ==============================
+# DB / 로컬 데이터
+# ==============================
+*.db
+*.sqlite3
+/postgres-data/
+/pgdata/
+docker-compose.override.yml
+
+# ==============================
+# Node.js / React (Vite)
+# ==============================
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================
+# 로그 / 캐시
+# ==============================
+logs/
+*.log
+.cache/
+
+# ==============================
+# 임베딩 캐시 / 개발용 응답 캐시 (재생성 가능한 데이터)
+# ==============================
+llm_cache.db
+embeddings_cache/
+
+# ==============================
+# IDE / 에디터
+# ==============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==============================
+# OS
+# ==============================
+.DS_Store
+Thumbs.db
+
+# ==============================
+# 빌드 산출물
+# ==============================
+build/
+*.egg-info/
+
+# ==============================
+# 시연/데모용 임시 파일 (개인정보 포함 가능성 있는 로컬 테스트 데이터)
+# ==============================
+demo_data_local/
+*.dump
