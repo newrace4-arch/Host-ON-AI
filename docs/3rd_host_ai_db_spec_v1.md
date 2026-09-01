@@ -551,6 +551,66 @@ WHERE r.property_id = :target_property_id
 6. Reservation 무결성 테스트(회귀 테스트 케이스로 등록)
 ```
 
+### 5-1. P0 항목 검증 시나리오 (9/1 설계확인 과정에서 확정, 9/5 실행용)
+
+> 8/31~9/1 설계 재확인 과정에서 나온 검증 쿼리를 여기 모아둔다. 9/5
+> Docker Postgres 실행 후 그대로 복사해서 실행하면 된다.
+
+**① Reservation CHECK 제약 검증 (간극항목1)**
+
+```sql
+-- 실패해야 정상 (제약이 제대로 걸렸다는 뜻) — bed만 있고 room은 NULL인 잘못된 조합
+INSERT INTO reservations (property_id, room_id, bed_id, channel_connection_id, check_in, check_out)
+VALUES (1, NULL, 5, 1, '2026-09-10', '2026-09-12');
+-- 예상 결과: ERROR: new row violates check constraint
+
+-- 성공해야 정상 (PROPERTY 단위, room/bed 둘다 NULL)
+INSERT INTO reservations (property_id, room_id, bed_id, channel_connection_id, check_in, check_out)
+VALUES (1, NULL, NULL, 1, '2026-09-10', '2026-09-12');
+```
+
+**② INQUIRY_RESPONSES is_latest 검증 (간극항목7)**
+
+```sql
+-- 1) 첫 응답 생성
+INSERT INTO inquiry_responses (inquiry_id, response_text, is_latest)
+VALUES (1, '첫번째 응답', true);
+
+-- 2) 재시도/재생성: 반드시 UPDATE 먼저, 그 다음 INSERT (순서 중요)
+UPDATE inquiry_responses SET is_latest=false WHERE inquiry_id=1 AND is_latest=true;
+INSERT INTO inquiry_responses (inquiry_id, response_text, is_latest)
+VALUES (1, '두번째 응답(재생성)', true);
+
+-- 3) 확인: 최신응답이 정확히 1개인지
+SELECT COUNT(*) FROM inquiry_responses WHERE inquiry_id = 1 AND is_latest = true;
+-- 예상 결과: 1
+
+-- 4) 이력이 삭제 안 되고 남아있는지 확인
+SELECT COUNT(*) FROM inquiry_responses WHERE inquiry_id = 1;
+-- 예상 결과: 2
+
+-- 5) 실수 재현(UPDATE 생략하고 바로 INSERT) — 에러 나야 정상, 안전장치 확인용
+INSERT INTO inquiry_responses (inquiry_id, response_text, is_latest)
+VALUES (1, '실수로 넣은 응답', true);
+-- 예상 결과: ERROR: duplicate key value violates unique constraint "uniq_inquiry_latest_response"
+```
+
+**③ MONTHLY_SETTLEMENTS 스냅샷 검증 (간극항목9)**
+
+```sql
+-- 1) 9월 정산 계산 (당시 수수료율 0.155로 스냅샷 저장)
+INSERT INTO monthly_settlements (property_id, target_month, gross_revenue, applied_commission_rate)
+VALUES (1, '2026-09', 1000000, 0.155);
+
+-- 2) 이후 수수료율 변경(정책 변경 시뮬레이션)
+UPDATE financial_configs SET commission_rate = 0.16 WHERE property_id = 1;
+
+-- 3) 확인: 9월 정산기록이 여전히 0.155인지(변경 전 값 유지)
+SELECT applied_commission_rate FROM monthly_settlements
+WHERE property_id = 1 AND target_month = '2026-09';
+-- 예상 결과: 0.155 (0.16이 나오면 스냅샷이 깨진 것 — 설계 오류)
+```
+
 ---
 
 *본 문서는 3rd Host AI 프로젝트의 6차 ERD 크로스체크 결과를 반영한 최종본이며, 이후
