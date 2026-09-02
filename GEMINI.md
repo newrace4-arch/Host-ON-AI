@@ -68,7 +68,9 @@ Claude Code(유일한 편집 권한) → 실제 파일 수정 + 커밋
   - **Gemini API는 이 앱의 런타임(실제 서비스 로직)에 사용하지 않습니다.**
     당신의 역할은 어디까지나 개발 과정의 조사·검토·콘텐츠 보조입니다.
 - 프론트: React + Tailwind + axios
-- 배포: Vercel + Render(무료) + Supabase
+- 배포: Vercel + Render(무료) + Supabase (Azure는 9/2 검토 후 전환하지
+  않기로 확정 — 제공받은 구독이 "체험용" 한도라 Azure OpenAI 등 즉시
+  사용 불가 확인됨)
 
 ## 핵심 데이터모델 원칙 (다른 구조로 재제안하지 말 것)
 

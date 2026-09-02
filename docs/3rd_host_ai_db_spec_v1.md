@@ -1,6 +1,10 @@
-# 3rd Host AI — DB 최종 명세서 (v1.1)
+# 3rd Host AI — DB 최종 명세서 (v1.2)
 
 > 브랜드명: **Host ON (AI)** (내부 코드/폴더명은 3rd_host_ai 유지)
+>
+> **v1.1 → v1.2 변경사항**: "공백일 자동 미세조정 + 성수기 방치감지"
+> 기능(6절) 신규 추가. `PROPERTIES`에 필드 2개 추가(새 테이블 없음).
+> Property 단위 데이터 격리 원칙(4절 -1번) 신규 추가.
 >
 > **v1.0 → v1.1 변경사항**: 아래 3개 정합성 문제 수정 후 Schema Freeze 대상으로
 > 재확정
@@ -128,6 +132,8 @@ CREATE TABLE properties (
   lower_bound_price  INTEGER,
   checkin_time       TIME NOT NULL DEFAULT '15:00',   -- v1.1 추가: Action Center 시간규칙용
   checkout_time      TIME NOT NULL DEFAULT '11:00',   -- v1.1 추가: Action Center 시간규칙용
+  weekday_adjustment_enabled BOOLEAN NOT NULL DEFAULT true,  -- v1.2 추가: 공백일 미세조정 on/off
+  holiday_adjustment_enabled BOOLEAN NOT NULL DEFAULT true,  -- v1.2 추가: 성수기 방치감지 on/off
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -513,6 +519,34 @@ WHERE r.property_id = :target_property_id
 
 ## 4. 문서화가 필요한 정책 (코드 주석/README에 반드시 남길 것)
 
+-1. **[v1.2 추가] Property 단위 데이터 격리 원칙 (전체 테이블 공통 최상위 원칙)**:
+   이 프로젝트의 핵심 전제는 **"한 호스트가 서로 다른 유형의 숙소를 여러 개
+   운영"**하는 것이므로, 숙소(Property)를 넘나드는 데이터 오염이 곧 서비스
+   신뢰성 붕괴로 직결된다. 따라서 게스트에게 노출되거나 운영 판단에 쓰이는
+   모든 테이블은 **직접 또는 간접적으로 반드시 `property_id`를 갖고, 모든
+   조회 쿼리는 `WHERE property_id = :current_property_id`를 빠짐없이
+   포함**해야 한다.
+
+   | 테이블 | property_id 확보 방식 |
+   |---|---|
+   | RESERVATIONS | 직접 FK |
+   | CHANNEL_CONNECTIONS | 직접 FK |
+   | FINANCIAL_CONFIGS / MONTHLY_SETTLEMENTS | 직접 FK |
+   | CLEANING_TASKS | 복합FK로 RESERVATIONS 경유 확보(2.9절) |
+   | INQUIRIES | 직접 FK(+ reservation_id로 이중 확인) |
+   | KNOWLEDGE_CHUNKS | 직접 FK — **RAG 검색 시 이 필터가 없으면
+     "숙소A 문의에 숙소B 하우스룰이 섞여 답변되는" 교차오답이라는
+     치명적 버그로 이어짐(가장 위험한 누락 지점)** |
+   | ACTION_ITEMS / CHECKLIST_ITEMS | 직접 FK |
+   | ROOMS / BEDS | 계층 FK로 PROPERTIES까지 역추적 가능 |
+
+   **애플리케이션 구현 시 반드시 지킬 것**: 서비스 레이어의 모든 조회
+   함수는 `property_id` 파라미터를 필수 인자로 받고, 이를 누락한 쿼리가
+   실수로 만들어지지 않도록 리뷰 시 이 항목을 체크리스트로 확인한다.
+   (스마트락 관련 데이터도 이 원칙을 그대로 따르되, 현재 스마트락은
+   100% Mock이라 실제 하드웨어 데이터는 없음 — 향후 실연동 시에도
+   동일 원칙 적용)
+
 0. **[v1.1 추가] DB가 보장하는 것과 애플리케이션이 보장하는 것을 명확히 구분**:
    - DB 보장: room이 실제 해당 property 소속인가 / bed가 실제 해당 room
      소속인가 / channel이 실제 해당 property 소속인가 / room·bed 조합
@@ -613,5 +647,55 @@ WHERE property_id = 1 AND target_month = '2026-09';
 
 ---
 
+## 6. 동적 가격 조정 로직 (공백일 미세조정 + 성수기 방치감지) [v1.2 신규]
+
+> 9/2 크로스체크로 추가 확정. "3박 이상만 받다보니 화~금이 비어버리는"
+> 실제 운영 페인포인트를 규칙화한 기능. 새 테이블 없이 `PROPERTIES`
+> 필드 2개만으로 구현한다.
+
+### 6.1 배치 처리 흐름
+
+```
+매일 00:00 배치 실행 (숙소별, 향후 14일 순회)
+  ↓
+STEP 1. 날짜 분류
+  평일(화~금) → "할인 후보"
+  주말(금·토) → "인상 후보"
+  공휴일/연휴(공공데이터 API) → "인상 후보"로 강제 격상
+  ↓
+STEP 2. 연휴 구간(3일 이상 연속 공휴일) 방치 감지
+  해당 구간 가격이 전부 base_price와 동일하게 M일 이상 방치됐으면
+  → 자동조정 하지 않고 "방치 감지" 알림만 생성
+  ↓
+STEP 3. 미예약 상태 + 날짜분류에 따라 추천가 계산(아래 표)
+  ↓
+Action Center에 "가격 조정 추천 N건(▲인상 M건/▼할인 K건)" 카드 생성
+  ↓
+호스트 대시보드에서 일괄승인 / 개별조정 / 무시
+```
+
+### 6.2 조정폭 표 (양방향)
+
+| 상황 | 조정 |
+|---|---|
+| 평일, 체크인 3일 이내, 미예약 | -3,000원(-1%) |
+| 평일, 체크인 7일 이내, 미예약 | -1,500원 |
+| 주말(금·토), 체크인 7일 이내, 미예약 | +3,000원(+1%) |
+| 공휴일/연휴, 미예약 | +5,000원(+2%) |
+| 공휴일/연휴인데 기본가와 동일하게 M일 이상 방치 | 조정 없이 알림만(호스트 승인 필요) |
+
+### 6.3 설계 원칙
+
+- **연휴·공휴일 가격은 시스템이 임의로 계속 올리지 않는다.** 방치 감지 →
+  알림 → 호스트 최종 승인 흐름으로만 처리(성수기 가격은 임팩트가 커서
+  100% 자동보다 안전장치 필요).
+- 평일/주말 미세조정(±1500~3000원)은 `weekday_adjustment_enabled=true`인
+  숙소에 한해 Action Center 🟢(자동처리 후보)로, 방치 감지는 🟡(오늘확인)로
+  분류한다.
+- 이 기능은 어디까지나 **규칙기반 추천**이며, "AI가 최적가격을 계산한다"는
+  과장된 설명을 하지 않는다(섹션 4의 원칙과 동일).
+
+---
+
 *본 문서는 3rd Host AI 프로젝트의 6차 ERD 크로스체크 결과를 반영한 최종본이며, 이후
-변경 시 이 문서를 기준으로 diff 관리합니다.*
+변경 시 이 문서를 기준으로 diff 관리합니다. (v1.2: 6절 가격조정 로직 추가)*
