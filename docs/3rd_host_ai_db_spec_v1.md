@@ -343,7 +343,11 @@ CREATE TABLE monthly_settlements (
 ```sql
 CREATE TABLE cleaning_tasks (
   task_id            BIGSERIAL PRIMARY KEY,
-  reservation_id     BIGINT NOT NULL UNIQUE,   -- 체크아웃 1건당 정확히 1개 (1:1)
+  reservation_id     BIGINT NOT NULL UNIQUE,   -- 예약당 정확히 1개(1:1).
+                                                -- v1.2 재정정(9/3): 체크아웃 시점이
+                                                -- 아니라 예약 CONFIRMED 즉시 선제생성
+                                                -- (scheduled_date=체크아웃일). 전날/당일
+                                                -- 자동알림 기능 성립을 위해 필요(state_events.md 참고)
   property_id        BIGINT NOT NULL,
   task_status        task_status_enum NOT NULL DEFAULT 'PENDING',
   cleaner_name       VARCHAR(100),

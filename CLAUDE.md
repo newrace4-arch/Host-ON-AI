@@ -145,6 +145,12 @@
 
 ## 참고 문서
 
-- `3rd_host_ai_db_spec_v1.md` — DB 스키마 최종 명세(DDL 전체)
+- `3rd_host_ai_db_spec_v1.md` — DB 스키마 최종 명세(DDL 전체, SSOT)
+- `docs/erd.md` — ERD 3종(논리/물리/RESERVATIONS확대본), DB명세서 변경시 함께 갱신
+- `docs/erd_memo.md` — 초보자용 ERD 관계설정 해설(PK/FK 이유 메모, 이미지 포함)
+- `docs/state_events.md` — 상태전이(3개 엔티티) + 이벤트 연결 구조(예약→청소→정산→알림)
+- `docs/api_contract.md` — API 엔드포인트 목록·요청/응답 스펙(v1.5)
+- `docs/claude_code_stage1_schema.md` — 1단계 스키마 구현 실행 지시서(9/5 실행용)
+- `docs/troubleshooting.md` — 개발 과정 문제/원인/해결 기록
 - `BACKUP_RULES.md` — 이 파일의 백업 규칙 원본(상세 설명 포함)
 - `.gitignore` — 이미 구성됨, 환경변수/캐시/빌드산출물 제외 처리됨

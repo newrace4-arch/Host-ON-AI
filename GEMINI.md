@@ -84,6 +84,9 @@ Claude Code(유일한 편집 권한) → 실제 파일 수정 + 커밋
 - `ActionItems.risk_level`은 AI의 법적/안전 판단이 아니라 규칙기반 운영
   우선순위 — 이 명칭 때문에 AI가 위험을 "판단"하는 기능을 제안하지 말 것
 - 전체 DDL 근거는 `3rd_host_ai_db_spec_v1.md` 참고 (이 문서가 최종 권위)
+- 그 외 참고문서: `docs/erd.md`(ERD 3종), `docs/erd_memo.md`(초보자용
+  관계설명), `docs/state_events.md`(상태전이/이벤트), `docs/api_contract.md`
+  (API 스펙), `docs/troubleshooting.md`(문제해결 기록) — 검토 시 활용
 
 ## 하지 말아야 할 제안 (이미 크로스체크로 걸러진 것들)
 
