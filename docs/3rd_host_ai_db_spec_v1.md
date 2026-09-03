@@ -570,6 +570,10 @@ WHERE r.property_id = :target_property_id
 
 ## 5. 구현 순서 (9/1부터)
 
+> **ERD(논리적/물리적/RESERVATIONS 확대본 3종)는 `docs/erd.md` 참고.**
+> DB 구조를 변경할 때는 이 문서(명세서)를 먼저 고치고, 그 다음 `docs/erd.md`를
+> 반드시 같은 날 동기화할 것 (9/2에 이 동기화를 누락했던 사고 재발 방지).
+
 ```
 1. PostgreSQL extension 활성화 (btree_gist, vector)
 2. ENUM 타입 생성 (섹션 1)
