@@ -1,6 +1,17 @@
-# Host ON (AI) — API Contract v1.5 (헬스체크 엔드포인트 추가)
+# Host ON (AI) — API Contract v1.6 (9/4 1단계 검증 반영)
 
-> `docs/3rd_host_ai_db_spec_v1.md`(v1.2) 16개 테이블을 기준으로 작성.
+> `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v1.5→v1.6 변경 (9/4 1단계 검증에서 발견된 불일치 정정)**:
+> 1. `GET /reservations/{id}` 응답의 `net_payout` → **`net_amount`**로 정정.
+>    (`net_payout`은 MONTHLY_SETTLEMENTS의 컬럼명이라 잘못 쓰인 것)
+> 2. `POST /inquiries`의 `reservation_id` Optional 서술이 DB(NOT NULL)와
+>    충돌했던 문제 해소 — DB 명세서 v1.3에서 실제로 nullable로 변경됨.
+> 3. `GET /channels/{id}/sync-errors` 응답 스펙 명시(`last_error_message`
+>    컬럼 v1.3 신규).
+> 4. `POST /cleaning-tasks/{id}/photo`를 `photo_urls` 배열 **append**로 명시.
+> 5. 동적 가격조정(명세서 6절) 대응 엔드포인트를 13절에 명시.
+> 6. `POST /settlements/{month}/confirm` 정식 경로 확정.
+>
 > **v1.4→v1.5 변경**: 강사님 제안(Render 슬립방지) 검토 과정에서
 > 발견된 `/health` 헬스체크 엔드포인트(11절) 신규 추가.
 >
@@ -108,6 +119,19 @@
 > 시도하면 `409 Conflict`, `code: "CHANNEL_ALREADY_CONNECTED"` 반환
 > (DB의 `UNIQUE(property_id, channel)` 제약과 일치).
 
+> **[v1.6] `GET /channels/{connection_id}/sync-errors` 응답 스펙**:
+> `CHANNEL_CONNECTIONS.last_error_message`(v1.3 신규 컬럼) 1건만 반환한다.
+> 실패 이력을 누적하는 별도 테이블은 만들지 않는다(범위확장 방지).
+> ```json
+> { "data": { "connection_id": 7, "sync_status": "FAILED",
+>             "last_synced_at": "2026-09-04T03:00:00Z",
+>             "last_error_message": "iCal URL 응답 없음(timeout 5s)" },
+>   "error": null }
+> ```
+> `sync_status`가 `FAILED`가 아니면 `last_error_message`는 항상 `null`이다
+> (동기화 성공 시 서버가 NULL로 초기화 — 지난 에러가 화면에 남지 않게).
+> 스택트레이스나 내부 URL은 이 필드에 넣지 않는다(정보노출 방지).
+
 ---
 
 ## 4. 예약 (RESERVATIONS) ⭐ 핵심
@@ -137,12 +161,17 @@
     "financial_status": "ESTIMATED",
     "gross_amount": 300000,
     "fee_amount": 46500,
-    "net_payout": 253500,
+    "net_amount": 253500,
     "is_conflict": false
   },
   "error": null
 }
 ```
+> **필드명 주의(v1.6 정정)**: 예약의 정산 후 실수령액은 `net_amount`다.
+> `net_payout`은 `MONTHLY_SETTLEMENTS`(월 단위 집계)의 컬럼명이므로
+> 예약 응답에 쓰지 않는다. `is_conflict`는 DB 컬럼이 아니라 **서버가
+> 매 조회 시 계산해 내려주는 파생 필드**(같은 property 내 다른 판매단위와
+> 기간이 겹치는지 여부)이므로 스키마에 없는 것이 정상이다.
 > ⚠️ 이 API는 `bookable_unit_type=PROPERTY`인데 `room_id`가 채워진 요청이
 > 들어오면 400 에러로 거부해야 함(명세서 4절 0번 — DB CHECK가 못 잡는
 > 부분을 여기서 애플리케이션이 검증). 구체적 에러 스펙:
@@ -171,6 +200,12 @@
 | GET | `/properties/{property_id}/settlements` | 월별 정산 목록 |
 | POST | `/properties/{property_id}/settlements/{month}/confirm` | 일괄확인(자동추정→확정) |
 
+> **[v1.6] 정식 경로 확정**: 정산 확정 엔드포인트의 정식 경로는 위의
+> `/properties/{property_id}/settlements/{month}/confirm`이다. CLAUDE.md
+> 코딩규칙 3번에 축약형(`POST /settlements/{month}/confirm`)으로 적혀
+> 있으나 그것은 서술 편의상의 축약이며, 실제 라우터는 property 스코프를
+> 경로에 포함한다(데이터 격리 원칙상 property_id가 URL에 있어야 함).
+
 > **정산 확정시 트랜잭션 범위**: `{month}`에 속하는 예약은
 > **`check_out`(체크아웃일) 기준**으로 판별한다(예: 8/28 체크인~9/2
 > 체크아웃 예약은 9월 정산에 포함 — 정산은 실제 퇴실 완료 시점 기준이
@@ -193,6 +228,21 @@
 > 전이되는 즉시 서버가 자동 트리거, scheduled_date=체크아웃일로 미리
 > 세팅, 별도 생성 API 없음 — UNIQUE 제약과 일치, 9/3 정정).
 
+> **[v1.6] `POST /cleaning-tasks/{task_id}/photo` 동작 규칙**: 업로드된
+> 사진 URL을 `CLEANING_TASKS.photo_urls`(JSONB 배열, v1.3 신규) **끝에
+> append**한다. 기존 배열을 교체하지 않는다 — 청소 구역을 나눠 여러 장
+> 올리는 실제 운영 패턴을 지원하기 위함. 응답은 갱신된 전체 배열을
+> 돌려준다.
+> ```json
+> { "data": { "task_id": 88,
+>             "photo_urls": ["https://.../living.jpg", "https://.../bath.jpg"] },
+>   "error": null }
+> ```
+> 사진 삭제가 필요하면 `PATCH /cleaning-tasks/{id}`로 배열 전체를
+> 덮어쓰는 방식으로 처리한다(개별 삭제 엔드포인트는 만들지 않음).
+> `VERIFIED` 전이는 호스트의 확인 행위로 결정되며 사진 0장이어도 가능하되,
+> UI에서 "사진 없음" 경고를 표시한다.
+
 ---
 
 ## 7. AI 문의응대 (INQUIRIES 계열) ⭐ 핵심
@@ -209,8 +259,15 @@
 > **POST /inquiries 요청 필드 nullable 규칙**: `property_id`는 **항상 필수**
 > (Property 데이터격리 원칙 — 어느 숙소 RAG를 검색할지 결정하는 값이라
 > 절대 생략 불가). `reservation_id`는 **Optional**(예약 전 문의, 예:
-> "반려동물 동반 가능한가요?" 같은 사전 문의를 지원하기 위함). DB의
-> `INQUIRIES.reservation_id`도 nullable로 설계되어 있음(명세서 2.10절).
+> "반려동물 동반 가능한가요?" 같은 사전 문의를 지원하기 위함).
+>
+> **[v1.6 정정 이력]** v1.5까지 이 문단은 "DB도 nullable로 설계되어 있음"
+> 이라고 적혀 있었으나, 실제 명세서 2.10절은 `NOT NULL`이었다(9/4 1단계
+> 검증에서 발견된 문서 간 정면 충돌). 개발자 결정에 따라 **DB 쪽을
+> nullable로 변경**해 사전문의 기능을 유지하기로 했고, 명세서 v1.3에
+> 반영 완료. 이때 `reservation_id`가 NULL이면 복합FK 검사가 통째로
+> 스킵되므로(`MATCH SIMPLE`), `property_id`에 **단독 FK가 함께 추가**된
+> 점을 구현 시 반드시 확인할 것(명세서 2.10절 참고).
 
 > **is_latest 갱신 순서(반드시 이 순서로 구현)**:
 > ```
@@ -328,6 +385,51 @@
 
 ---
 
+## 13. 동적 가격 조정 (명세서 6절 대응, v1.6 신규)
+
+> 9/4 1단계 검증에서 **"명세서 6절에 기능은 확정돼 있는데 대응 API가
+> 하나도 없다"**는 누락이 발견되어 추가. 10/7 작업(추천가 카드·승인
+> 클릭·하한가 경고)의 구현 대상이다.
+
+**설계 원칙: 새 테이블을 만들지 않는다.** 가격 추천 결과는 별도
+`price_recommendations` 테이블이 아니라 **`ACTION_ITEMS` 카드로만**
+표현한다(명세서 6.1절 흐름과 일치, 범위확장 방지).
+
+| Method | Endpoint | 설명 |
+|---|---|---|
+| GET | `/properties/{property_id}/price-recommendations` | 오늘자 배치가 만든 가격조정 추천 목록(향후 14일). 내부적으로 `ACTION_ITEMS` 중 `category='PRICE_ADJUSTMENT'`인 OPEN 건을 조회 |
+| POST | `/properties/{property_id}/price-recommendations/apply` | 선택한 추천 일괄 승인 → **Mock 반영**(OTA 가격수정 API는 범위 밖) + 해당 ACTION_ITEMS를 `RESOLVED`로 전이 |
+
+**응답/요청 예시**
+```json
+// GET 응답
+{ "data": [
+    { "action_id": 91, "date": "2026-09-16", "day_type": "WEEKDAY",
+      "current_price": 150000, "recommended_price": 147000,
+      "delta": -3000, "reason": "평일·체크인 3일 이내·미예약",
+      "risk_level": "GREEN_AUTO", "below_lower_bound": false }
+  ], "error": null }
+
+// POST 요청
+{ "action_ids": [91, 92] }
+```
+
+> **하한가 경고**: `recommended_price < PROPERTIES.lower_bound_price`이면
+> `below_lower_bound: true`로 내려주고, apply 요청에 해당 건이 포함되면
+> `400`, `code: "BELOW_LOWER_BOUND"`로 거부한다(호스트가 하한가를 먼저
+> 낮춰야 적용 가능).
+>
+> **연휴 방치감지는 apply 대상이 아니다.** 명세서 6.3절 원칙대로 자동
+> 조정 없이 🟡 알림 카드만 발행되므로, 이 건은 `recommended_price`가
+> `null`이고 `category='PRICE_NEGLECT'`로 구분된다. 승인 UI에서 조정
+> 추천과 섞이지 않게 별도 섹션으로 표시할 것.
+>
+> **가격조정은 AI가 아니라 규칙기반이다.** 응답의 `reason`은 LLM 생성
+> 문장이 아니라 6.2절 조정폭 표에서 그대로 가져온 고정 문자열이다
+> (명세서 4절 원칙과 동일 — "AI가 최적가를 계산한다"고 설명하지 않음).
+
+---
+
 ## 부록. 도메인별 → 테이블 매핑 요약
 
 | 도메인 | DB 테이블 |
@@ -341,6 +443,7 @@
 | AI응대 | INQUIRIES, INQUIRY_CLASSIFICATIONS, INQUIRY_RESPONSES, INQUIRY_APPROVALS |
 | RAG | KNOWLEDGE_CHUNKS |
 | 알림 | ACTION_ITEMS |
+| 동적 가격조정 | ACTION_ITEMS(`category='PRICE_ADJUSTMENT'`/`'PRICE_NEGLECT'`) + PROPERTIES(`lower_bound_price`, `*_adjustment_enabled`) — **전용 테이블 없음** |
 | 컴플라이언스 | CHECKLIST_ITEMS |
 
 **16개 테이블 전부 매핑 완료.**

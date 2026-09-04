@@ -1,6 +1,19 @@
-# 3rd Host AI — DB 최종 명세서 (v1.2)
+# 3rd Host AI — DB 최종 명세서 (v1.3)
 
 > 브랜드명: **Host ON (AI)** (내부 코드/폴더명은 3rd_host_ai 유지)
+>
+> **v1.2 → v1.3 변경사항 (9/4 1단계 검증에서 발견된 4건 반영)**:
+> 1. `INQUIRIES.reservation_id`를 **NOT NULL → nullable**로 변경(예약 전
+>    사전문의 지원, API Contract 7절과 정합). 이로 인해 복합FK 검사가
+>    통째로 스킵되는 구멍이 생기므로 `INQUIRIES.property_id`에 **단독 FK를
+>    신규 추가**(2.10절).
+> 2. `CHANNEL_CONNECTIONS.last_error_message` 신규 추가 — API Contract에
+>    이미 있던 `GET /channels/{id}/sync-errors`가 저장할 컬럼이 없었음(2.5절).
+> 3. `CLEANING_TASKS.photo_urls`(JSONB 배열) 신규 추가 — 청소 완료사진
+>    업로드 API가 저장할 컬럼이 없었음. 교체가 아니라 **append 누적**(2.9절).
+> 4. `ACTION_ITEMS`의 `reservation_id`를 단독 FK → **복합 FK**로 변경.
+>    다른 숙소의 예약을 참조하는 액션아이템이 만들어질 수 있던 구멍을
+>    DB 레벨에서 차단(2.15절, 4절 -1번 원칙과 일치).
 >
 > **v1.1 → v1.2 변경사항**: "공백일 자동 미세조정 + 성수기 방치감지"
 > 기능(6절) 신규 추가. `PROPERTIES`에 필드 2개 추가(새 테이블 없음).
@@ -207,6 +220,7 @@ CREATE TABLE channel_connections (
   external_property_id   VARCHAR(100),
   sync_status            sync_status_enum NOT NULL DEFAULT 'SYNCING',
   last_synced_at         TIMESTAMPTZ,
+  last_error_message     TEXT,   -- v1.3 추가: 마지막 동기화 실패 사유(1건만 보관)
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (connection_id, property_id),  -- Reservation 복합 FK용
   UNIQUE (property_id, channel)         -- MVP: 채널당 연결 1개로 제한
@@ -214,6 +228,14 @@ CREATE TABLE channel_connections (
 
 CREATE INDEX idx_channel_connections_property ON channel_connections(property_id);
 ```
+
+> **[v1.3] `last_error_message` 운용 규칙**: iCal 파싱/네트워크 실패 시
+> `sync_status='FAILED'`와 함께 사람이 읽을 수 있는 사유 1줄을 저장한다
+> (예: `"iCal URL 응답 없음(timeout 5s)"`, `"ICS 파싱 실패: 잘못된 DTSTART"`).
+> 성공 시(`SYNCED`)에는 반드시 `NULL`로 초기화한다 — 지난 에러가 화면에
+> 계속 남아 호스트를 혼란시키는 것을 막기 위함. 이력 누적은 하지 않고
+> **마지막 1건만** 보관한다(테이블 추가 없이 처리하기 위한 의도적 제한).
+> 원문 스택트레이스는 여기 넣지 않고 서버 로그로만 남긴다(정보노출 방지).
 
 ### 2.6 RESERVATIONS ⭐ 핵심 테이블
 
@@ -358,7 +380,12 @@ CREATE TABLE cleaning_tasks (
   task_status        task_status_enum NOT NULL DEFAULT 'PENDING',
   cleaner_name       VARCHAR(100),
   amenity_shortage   BOOLEAN NOT NULL DEFAULT false,
-  scheduled_date     TIMESTAMPTZ,
+  scheduled_date     TIMESTAMPTZ,   -- 체크아웃 "날짜"를 00:00으로 저장. 시각 부분은
+                                     -- 의미 없음(실제 청소 착수시각이 아님).
+                                     -- 컬럼명이 _date인데 타입이 TIMESTAMPTZ인 이유:
+                                     -- 전날/당일 알림 스케줄러가 시각 연산을 하므로
+                                     -- 타입은 유지하고 의미만 여기서 고정한다(v1.3 명확화).
+  photo_urls         JSONB NOT NULL DEFAULT '[]'::jsonb,  -- v1.3 추가: 완료사진 URL 배열
   verified_at        TIMESTAMPTZ,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY (reservation_id, property_id)
@@ -368,13 +395,22 @@ CREATE TABLE cleaning_tasks (
 CREATE INDEX idx_cleaning_tasks_property_status ON cleaning_tasks(property_id, task_status);
 ```
 
+> **[v1.3] `photo_urls` 운용 규칙**: `POST /cleaning-tasks/{id}/photo`는
+> 기존 값을 **교체하지 않고 배열 끝에 append**한다(청소 여러 구역을 나눠
+> 찍어 올리는 실제 운영 패턴 반영). 저장 형태는 URL 문자열 배열
+> (`["https://.../a.jpg", "https://.../b.jpg"]`). `VERIFIED` 전이 조건은
+> "호스트가 사진을 확인하고 승인" — 사진이 0장이어도 호스트가 직접
+> 확인했다면 전이 가능하게 두되, UI에서 사진 없음 경고를 표시한다.
+
 ### 2.10 INQUIRIES
 
 ```sql
 CREATE TABLE inquiries (
   inquiry_id       BIGSERIAL PRIMARY KEY,
-  reservation_id   BIGINT NOT NULL,
-  property_id      BIGINT NOT NULL,
+  reservation_id   BIGINT,            -- v1.3: NOT NULL 해제. 예약 전 사전문의 지원
+  property_id      BIGINT NOT NULL
+                     REFERENCES properties(property_id) ON DELETE CASCADE,
+                     -- ↑ v1.3 신규: 단독 FK. 아래 복합FK가 스킵될 때의 유일한 방어선
   channel          VARCHAR(30),
   message          TEXT NOT NULL,
   language         VARCHAR(10),
@@ -386,6 +422,25 @@ CREATE TABLE inquiries (
 CREATE INDEX idx_inquiries_property ON inquiries(property_id);
 CREATE INDEX idx_inquiries_reservation ON inquiries(reservation_id);
 ```
+
+> **[v1.3] `reservation_id` nullable 전환 — 왜 `property_id` 단독 FK가
+> 반드시 함께 필요한가**
+>
+> PostgreSQL 복합 FK의 기본 매칭 방식은 `MATCH SIMPLE`이다. 이 방식은
+> **구성 컬럼 중 하나라도 NULL이면 FK 검사를 통째로 건너뛴다.** 따라서
+> `reservation_id`가 NULL인 사전문의 행에서는 위 복합FK가 아예 동작하지
+> 않고, 그 결과 `property_id`가 **존재하지도 않는 숙소 ID여도 INSERT가
+> 통과**한다. 이는 4절 -1번 "Property 단위 데이터 격리" 원칙에 정면으로
+> 반하는 구멍이므로, `property_id`에 단독 FK를 별도로 걸어 어떤 경우에도
+> 실재하는 숙소를 가리키도록 보장한다.
+>
+> - **두 FK는 역할이 다르므로 둘 다 유지한다.** 단독 FK = "이 숙소가
+>   실재하는가", 복합 FK = "이 예약이 정말 이 숙소의 예약인가".
+> - **애플리케이션 책임**: `reservation_id`가 NULL이 아닌 경우에도
+>   `property_id`는 여전히 필수 입력이다(어느 숙소의 RAG를 검색할지
+>   결정하는 값이라 생략 불가 — API Contract 7절과 동일 규칙).
+> - **`ON DELETE CASCADE` 중복 지정은 정상이다.** 예약이 삭제되면 복합FK
+>   경로로, 숙소가 삭제되면 단독FK 경로로 각각 정리된다.
 
 ### 2.11 INQUIRY_CLASSIFICATIONS (1:1 — "1문의=Claude 1회 통합호출" 아키텍처와 일치)
 
@@ -464,17 +519,40 @@ CREATE INDEX idx_knowledge_chunks_property ON knowledge_chunks(property_id);
 CREATE TABLE action_items (
   action_id         BIGSERIAL PRIMARY KEY,
   property_id       BIGINT NOT NULL REFERENCES properties(property_id) ON DELETE CASCADE,
-  reservation_id    BIGINT REFERENCES reservations(reservation_id) ON DELETE SET NULL,
+  reservation_id    BIGINT,   -- v1.3: 단독 FK 제거, 아래 복합FK로 대체
   risk_level        action_risk_level_enum NOT NULL,  -- 규칙기반 우선순위. AI/법적 판단 아님 (섹션 8 참고)
   category          VARCHAR(50) NOT NULL,
   title             TEXT NOT NULL,
   content           TEXT,
   status            action_status_enum NOT NULL DEFAULT 'OPEN',
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- v1.3 신규: CLEANING_TASKS/INQUIRIES와 동일한 계층 무결성 방어.
+  --   reservation_id가 NULL이면(예: 서류만료 알림처럼 예약과 무관한 건)
+  --   MATCH SIMPLE 규칙에 따라 검사가 스킵되고, property_id는 위 단독 FK가 보장한다.
+  FOREIGN KEY (reservation_id, property_id)
+    REFERENCES reservations(reservation_id, property_id)
+    ON DELETE SET NULL (reservation_id)
 );
 
 CREATE INDEX idx_action_items_property_status ON action_items(property_id, status, risk_level);
 ```
+
+> **[v1.3] 왜 복합 FK로 바꿨는가**: 기존 설계는 `property_id`와
+> `reservation_id`가 서로 무관한 단독 FK였다. 그래서 **"강남 숙소의
+> 액션아이템인데 참조하는 예약은 홍대 호스텔 예약"** 같은 행이 DB
+> 레벨에서 아무 저항 없이 만들어질 수 있었다. 이는 4절 -1번 데이터 격리
+> 원칙에 어긋나고, Action Center 화면이 다른 숙소 예약을 잘못 띄우는
+> 버그로 직결된다. `RESERVATIONS`에 이미 `UNIQUE(reservation_id,
+> property_id)`가 있으므로 추가 제약 없이 복합FK 참조가 가능하다.
+>
+> ⚠️ **`ON DELETE SET NULL (reservation_id)`는 PostgreSQL 15+ 문법이다**
+> (컬럼 목록을 지정하는 SET NULL). 컬럼 목록 없이 그냥 `SET NULL`을 쓰면
+> `property_id`까지 NULL로 만들려다 NOT NULL 위반으로 **삭제 자체가
+> 실패**한다. 로컬 Docker Postgres 이미지를 반드시 15 이상으로 고정할 것
+> (dev/prod parity 원칙 — Supabase는 15+). 만약 14 이하를 쓰게 되면
+> 대안은 `ON DELETE CASCADE`이며, 이 경우 예약이 삭제될 때 해당
+> 액션아이템 이력도 함께 사라진다는 점을 감수해야 한다.
 
 > **중복 생성 방지**: DB UNIQUE 제약 대신 애플리케이션에서 "동일 `reservation_id` +
 > `category` + `status='OPEN'` 조합이 이미 있으면 새로 만들지 않고 기존 항목을 재사용"하는
@@ -543,11 +621,14 @@ WHERE r.property_id = :target_property_id
    | CHANNEL_CONNECTIONS | 직접 FK |
    | FINANCIAL_CONFIGS / MONTHLY_SETTLEMENTS | 직접 FK |
    | CLEANING_TASKS | 복합FK로 RESERVATIONS 경유 확보(2.9절) |
-   | INQUIRIES | 직접 FK(+ reservation_id로 이중 확인) |
+   | INQUIRIES | **직접 FK(v1.3 신규) + 복합FK 이중 방어** — `reservation_id`가
+     nullable이라 복합FK만으로는 사전문의 행에서 검사가 스킵됨(2.10절 참고) |
    | KNOWLEDGE_CHUNKS | 직접 FK — **RAG 검색 시 이 필터가 없으면
      "숙소A 문의에 숙소B 하우스룰이 섞여 답변되는" 교차오답이라는
      치명적 버그로 이어짐(가장 위험한 누락 지점)** |
-   | ACTION_ITEMS / CHECKLIST_ITEMS | 직접 FK |
+   | ACTION_ITEMS | 직접 FK + **복합FK(v1.3 신규)** — 다른 숙소의 예약을
+     참조하는 액션아이템을 DB가 차단(2.15절 참고) |
+   | CHECKLIST_ITEMS | 직접 FK |
    | ROOMS / BEDS | 계층 FK로 PROPERTIES까지 역추적 가능 |
 
    **애플리케이션 구현 시 반드시 지킬 것**: 서비스 레이어의 모든 조회
@@ -585,6 +666,9 @@ WHERE r.property_id = :target_property_id
 > 반드시 같은 날 동기화할 것 (9/2에 이 동기화를 누락했던 사고 재발 방지).
 
 ```
+0. PostgreSQL 버전 확인 — 반드시 15 이상 (v1.3: ACTION_ITEMS의
+   `ON DELETE SET NULL (컬럼목록)` 문법이 15+ 전용. 로컬 Docker 이미지와
+   Supabase 버전을 같은 메이저로 맞출 것)
 1. PostgreSQL extension 활성화 (btree_gist, vector)
 2. ENUM 타입 생성 (섹션 1)
 3. Alembic 초기 마이그레이션 작성 → 테이블 생성 순서:
@@ -659,6 +743,35 @@ WHERE property_id = 1 AND target_month = '2026-09';
 -- 예상 결과: 0.155 (0.16이 나오면 스냅샷이 깨진 것 — 설계 오류)
 ```
 
+**④ [v1.3 신규] INQUIRIES 사전문의 + property_id 단독FK 검증**
+
+```sql
+-- 성공해야 정상 (예약 전 사전문의 — reservation_id NULL)
+INSERT INTO inquiries (reservation_id, property_id, message)
+VALUES (NULL, 1, '반려동물 동반 가능한가요?');
+
+-- 실패해야 정상 (존재하지 않는 숙소 ID — 단독FK가 잡아야 함)
+INSERT INTO inquiries (reservation_id, property_id, message)
+VALUES (NULL, 99999, '없는 숙소로 들어온 문의');
+-- 예상 결과: ERROR: violates foreign key constraint (property_id)
+--   ※ 이 INSERT가 통과하면 단독FK를 빠뜨린 것 — 복합FK는 reservation_id가
+--     NULL이라 검사를 스킵하므로 절대 잡아주지 못한다.
+```
+
+**⑤ [v1.3 신규] ACTION_ITEMS 교차숙소 참조 차단 검증**
+
+```sql
+-- 전제: reservation 501은 property 1 소속
+-- 실패해야 정상 (property 2의 액션아이템이 property 1의 예약을 참조)
+INSERT INTO action_items (property_id, reservation_id, risk_level, category, title)
+VALUES (2, 501, 'RED_NOW', 'CLEANING_DELAY', '교차 참조 테스트');
+-- 예상 결과: ERROR: violates foreign key constraint (복합FK)
+
+-- 성공해야 정상 (예약과 무관한 서류만료 알림 — reservation_id NULL)
+INSERT INTO action_items (property_id, reservation_id, risk_level, category, title)
+VALUES (2, NULL, 'YELLOW_TODAY', 'COMPLIANCE_EXPIRY', '영업신고증 만료 D-3');
+```
+
 ---
 
 ## 6. 동적 가격 조정 로직 (공백일 미세조정 + 성수기 방치감지) [v1.2 신규]
@@ -712,4 +825,7 @@ Action Center에 "가격 조정 추천 N건(▲인상 M건/▼할인 K건)" 카�
 ---
 
 *본 문서는 3rd Host AI 프로젝트의 6차 ERD 크로스체크 결과를 반영한 최종본이며, 이후
-변경 시 이 문서를 기준으로 diff 관리합니다. (v1.2: 6절 가격조정 로직 추가)*
+변경 시 이 문서를 기준으로 diff 관리합니다. (v1.2: 6절 가격조정 로직 추가 /
+v1.3: 9/4 1단계 검증 결과 4건 반영 — INQUIRIES nullable+단독FK,
+CHANNEL_CONNECTIONS.last_error_message, CLEANING_TASKS.photo_urls,
+ACTION_ITEMS 복합FK)*

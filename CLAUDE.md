@@ -151,9 +151,20 @@
   PROPERTY↔ROOM/BED 교차 충돌은 애플리케이션 트랜잭션에서 검증.
 - `CleaningTask`는 `Reservation`과 1:1 (UNIQUE 제약 필수)
 - `InquiryResponse`는 1:N + `is_latest` 플래그 (재시도/재답변 대응)
+- **[v1.3] `Inquiry.reservation_id`는 nullable**(예약 전 사전문의 지원).
+  단, `reservation_id`가 NULL이면 복합FK가 `MATCH SIMPLE` 규칙에 따라
+  검사를 통째로 스킵하므로 **`Inquiry.property_id`에 단독 FK가 반드시
+  함께 걸려 있어야 한다**(둘 중 하나만 만들면 데이터 격리에 구멍).
+- **[v1.3] `ActionItem.reservation_id`는 복합FK**
+  `(reservation_id, property_id) → reservations`. 단독 FK로 만들면 다른
+  숙소의 예약을 참조하는 액션아이템이 생긴다. 삭제 정책은
+  `ON DELETE SET NULL (reservation_id)`이며 **PostgreSQL 15+ 필요**.
 - `ActionItems.risk_level`은 **AI의 법적/안전 판단이 아니라 규칙기반
   운영 우선순위**다. 이 명칭 때문에 AI가 위험을 판단하는 것처럼 보이는
   기능을 만들지 않는다.
+- **동적 가격조정에는 전용 테이블을 만들지 않는다.** 추천 결과는
+  `ACTION_ITEMS`(`category='PRICE_ADJUSTMENT'` / `'PRICE_NEGLECT'`)
+  카드로만 표현한다(API Contract 13절).
 - 전체 DDL과 근거는 `3rd_host_ai_db_spec_v1.md` 참고 — 이 파일이 스키마의
   최종 권위 문서다.
 
@@ -206,8 +217,11 @@ C:\3rd host AI\
   `class CleaningTask(Base):`)
 - **Pydantic 스키마**: `[도메인][용도]Schema/DTO` 파스칼케이스
   (예: `ReservationCreateRequest`, `DashboardSummaryResponse`)
-- **DB 컬럼/필드명**: DB명세서(v1.2)와 100% 일치하는 snake_case
-  (`weekday_adjustment_enabled`, `applied_commission_rate`)
+- **DB 컬럼/필드명**: DB명세서(**v1.3**)와 100% 일치하는 snake_case
+  (`weekday_adjustment_enabled`, `applied_commission_rate`).
+  ⚠️ 비슷한 이름 혼동 주의: 예약의 실수령액은 `net_amount`,
+  월정산의 실수령액은 `net_payout` — 서로 다른 테이블의 다른 컬럼이다
+  (9/4 검증에서 API Contract가 이를 섞어 쓴 것이 발견됨)
 - **라우터 함수명**: `create_reservation`, `get_dashboard_summary` 형태
 - **프론트 컴포넌트**: 파스칼케이스(`ActionCenterQueue.tsx`)
 - **프론트 훅/유틸**: 카멜케이스(`useReservation.ts`, `formatCurrency.ts`)
@@ -227,7 +241,10 @@ C:\3rd host AI\
    확정+해당월 예약 `financial_status` 일괄변경을 단일 트랜잭션
    (`async with db.begin():`)으로 묶는다.
 4. **재시도 통제**: `retry_count = INQUIRY_RESPONSES 레코드수 - 1`,
-   `count>=3`이면 429+`MAX_RETRY_EXCEEDED`. `regenerate`는
+   **`retry_count >= 2`이면 429+`MAX_RETRY_EXCEEDED`** (재시도 상한
+   **2회** = 문의 1건당 Claude 호출 최대 3회: 최초1 + 재시도2.
+   9/4 검증에서 이 줄만 `>=3`으로 잘못 적혀 있던 것을 API Contract·
+   state_events·troubleshooting·체크리스트 4개 문서에 맞춰 정정). `regenerate`는
    `SELECT...FOR UPDATE`로 행잠금. `is_latest` 갱신은 반드시
    UPDATE(false) 먼저, INSERT(true) 나중(순서 바뀌면 부분UNIQUE
    인덱스 위반). Claude 타임아웃(최초10초/재시도5초)은 사용자
@@ -366,14 +383,24 @@ C:\3rd host AI\
 - DB 구조를 하나라도 변경하면 항상 이 순서로 갱신한다:
   `DB 명세서 수정 → ERD 수정 → API Contract 영향 확인 → 체크리스트 수정 → git commit`.
   체크리스트를 먼저 고치지 않는다.
+- **[9/4 검증에서 얻은 규칙] API Contract에 엔드포인트를 새로 적을 때는,
+  그 요청/응답 데이터를 실제로 저장할 컬럼이 명세서에 있는지 먼저
+  확인한다.** 9/4 검증에서 `sync-errors`(실패사유)와 `photo`(청소사진)
+  두 API가 "저장할 곳이 없는 API"로 발견됐다. API를 먼저 쓰고 스키마를
+  나중에 맞추는 순서는 금지.
+- **[9/4 검증에서 얻은 규칙] 한 사실이 여러 문서에 적히면 숫자·필드명은
+  반드시 한 곳을 원본으로 삼는다.** 재시도 상한(2회)이 5개 문서에
+  흩어져 있다가 CLAUDE.md만 3으로 어긋나 있었다. 값이 바뀌면 검색으로
+  전수 확인할 것.
 
 ## 참고 문서
 
-- `3rd_host_ai_db_spec_v1.md` — DB 스키마 최종 명세(DDL 전체, SSOT)
-- `docs/erd.md` — ERD 3종(논리/물리/RESERVATIONS확대본), DB명세서 변경시 함께 갱신
+- `3rd_host_ai_db_spec_v1.md` — DB 스키마 최종 명세(DDL 전체, SSOT) — **현재 v1.3**
+- `docs/erd.md` — ERD 3종(논리/물리/RESERVATIONS확대본), DB명세서 변경시 함께 갱신.
+  물리 스키마(2절)는 요약본이 아니라 **DDL 전수 반영본**이므로 컬럼 추가 시 반드시 동반 수정
 - `docs/erd_memo.md` — 초보자용 ERD 관계설정 해설(PK/FK 이유 메모, 이미지 포함)
 - `docs/state_events.md` — 상태전이(3개 엔티티) + 이벤트 연결 구조(예약→청소→정산→알림)
-- `docs/api_contract.md` — API 엔드포인트 목록·요청/응답 스펙(v1.5)
+- `docs/api_contract.md` — API 엔드포인트 목록·요청/응답 스펙(**v1.6**)
 - `docs/claude_code_stage1_schema.md` — 1단계 스키마 구현 실행 지시서(9/5 실행용)
 - `docs/troubleshooting.md` — 개발 과정 문제/원인/해결 기록
 - `BACKUP_RULES.md` — 이 파일의 백업 규칙 원본(상세 설명 포함)

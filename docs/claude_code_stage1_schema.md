@@ -9,9 +9,21 @@
 > - [ ] FastAPI/SQLAlchemy/Alembic 설치 완료
 > - [ ] `alembic init alembic` 완료
 > - [ ] `.env`에 `DATABASE_URL` 설정 완료
+> - [ ] **Docker Postgres 이미지가 15 이상인가** (명세서 v1.3: ACTION_ITEMS의
+>   `ON DELETE SET NULL (컬럼목록)`이 PG15+ 전용 문법. Supabase와 같은
+>   메이저 버전으로 맞출 것 — 이번 단계에서는 안 쓰이지만 다음 단계에서
+>   바로 필요하므로 지금 확인해두는 편이 낫습니다)
 >
 > 이 조건이 하나라도 안 갖춰졌다면 아래 2단계(`alembic upgrade head`)에서
 > 바로 에러가 납니다.
+>
+> **🔴 9/4 1단계 검증 반영 (중요)**: 이 지시서는 명세서 **v1.1 시점에
+> 작성**되어, v1.2에서 `PROPERTIES`에 추가된 필드 2개
+> (`weekday_adjustment_enabled`, `holiday_adjustment_enabled`)가 빠져
+> 있었습니다. 아래 1단계 지시문과 Schema Freeze 기준에 반영 완료했으니
+> **반드시 이 갱신본을 사용하세요.** 옛 버전을 그대로 복사하면 필드 2개가
+> 누락된 채 테이블이 만들어져, 10/7 동적 가격조정 기능에서 다시 마이그
+> 레이션을 해야 합니다.
 
 ---
 
@@ -46,10 +58,19 @@
      name(NOT NULL), accommodation_type(NOT NULL),
      bookable_unit_type(NOT NULL), address, base_price(DEFAULT 0),
      lower_bound_price, checkin_time(TIME, DEFAULT '15:00'),
-     checkout_time(TIME, DEFAULT '11:00'), created_at
+     checkout_time(TIME, DEFAULT '11:00'),
+     weekday_adjustment_enabled(BOOLEAN, NOT NULL, DEFAULT true),
+     holiday_adjustment_enabled(BOOLEAN, NOT NULL, DEFAULT true),
+     created_at
      ※ checkin_time/checkout_time은 v1.1에서 추가됨 — 나중 단계(5단계)
        Action Center의 "체크인 N시간 전" 규칙 계산에 반드시 필요하니
        지금 단계에서 빠뜨리지 말 것.
+     ※ weekday_adjustment_enabled/holiday_adjustment_enabled는 v1.2에서
+       추가됨(명세서 6절 공백일 미세조정·성수기 방치감지 on/off 스위치).
+       10/7 동적 가격조정 기능이 이 두 필드를 직접 읽으므로 지금 함께
+       만들어야 한다 — 9/4 검증에서 이 지시서에 누락돼 있던 것을 발견해
+       보완한 항목이다.
+     ※ lower_bound_price는 하한가 경고(10/7)에 쓰인다. NULL 허용.
      ※ bookable_unit_type과 room_id/bed_id의 일치 여부를 강제하는
        CHECK 제약은 이 단계에서 만들지 않는다. 그건 Reservation
        테이블 생성 시점(명세서 2.6절)에 구현하되, **PostgreSQL 일반
@@ -158,11 +179,18 @@ git commit -m "feat(db): establish Host-Property-Room-Bed schema with composite 
 git tag -a v0.1 -m "1단계 공간계층 스키마 확정(Schema Freeze)"
 ```
 
+> 참고: 이미 `v0.1-ssot` 태그(DB명세서 SSOT 확정 시점)가 존재한다.
+> 이름이 비슷하지만 다른 태그이며, `v0.1`은 **실제 코드 스키마** 확정
+> 시점을 가리킨다. 헷갈리지 않도록 태그 메시지를 위와 같이 명시할 것.
+
 ---
 
 ## Schema Freeze 통과 기준 (전부 체크되면 다음 단계로)
 
 - [ ] Host/Property/Room/Bed 컬럼이 명세서와 정확히 일치 (phone 없음)
+- [ ] **PROPERTIES에 v1.2 필드 2개(weekday_adjustment_enabled,
+      holiday_adjustment_enabled) + lower_bound_price가 들어갔는가**
+      (9/4 검증에서 지시서 누락 발견 — 가장 빠지기 쉬운 항목)
 - [ ] ENUM 6개 값 정확
 - [ ] FK 4단계 전부 ON DELETE CASCADE + ORM cascade 둘 다 적용
 - [ ] UNIQUE 4개(room_property_ref, room_name, bed_room_ref, bed_label) 전부 생성
