@@ -14,6 +14,12 @@
 > 4. `ACTION_ITEMS`의 `reservation_id`를 단독 FK → **복합 FK**로 변경.
 >    다른 숙소의 예약을 참조하는 액션아이템이 만들어질 수 있던 구멍을
 >    DB 레벨에서 차단(2.15절, 4절 -1번 원칙과 일치).
+> 5. `CLEANING_TASKS.scheduled_date` → **`scheduled_at`으로 개명**(타입은
+>    `TIMESTAMPTZ` 그대로). `_date`라는 이름이 DATE 타입으로 오해를 부르고,
+>    다른 TIMESTAMPTZ 컬럼(`last_synced_at`, `verified_at`, `approved_at`)의
+>    `_at` 네이밍 컨벤션과도 어긋났음. 저장값 의미도 "체크아웃일 00:00"이
+>    아니라 **`check_out` + `checkout_time`을 결합한 실제 체크아웃 시각**으로
+>    명확히 함(2.9절).
 >
 > **v1.1 → v1.2 변경사항**: "공백일 자동 미세조정 + 성수기 방치감지"
 > 기능(6절) 신규 추가. `PROPERTIES`에 필드 2개 추가(새 테이블 없음).
@@ -374,17 +380,19 @@ CREATE TABLE cleaning_tasks (
   reservation_id     BIGINT NOT NULL UNIQUE,   -- 예약당 정확히 1개(1:1).
                                                 -- v1.2 재정정(9/3): 체크아웃 시점이
                                                 -- 아니라 예약 CONFIRMED 즉시 선제생성
-                                                -- (scheduled_date=체크아웃일). 전날/당일
+                                                -- (scheduled_at=체크아웃 시각). 전날/당일
                                                 -- 자동알림 기능 성립을 위해 필요(state_events.md 참고)
   property_id        BIGINT NOT NULL,
   task_status        task_status_enum NOT NULL DEFAULT 'PENDING',
   cleaner_name       VARCHAR(100),
   amenity_shortage   BOOLEAN NOT NULL DEFAULT false,
-  scheduled_date     TIMESTAMPTZ,   -- 체크아웃 "날짜"를 00:00으로 저장. 시각 부분은
-                                     -- 의미 없음(실제 청소 착수시각이 아님).
-                                     -- 컬럼명이 _date인데 타입이 TIMESTAMPTZ인 이유:
-                                     -- 전날/당일 알림 스케줄러가 시각 연산을 하므로
-                                     -- 타입은 유지하고 의미만 여기서 고정한다(v1.3 명확화).
+  scheduled_at       TIMESTAMPTZ,   -- v1.3: scheduled_date에서 개명. 타입은 그대로.
+                                     -- 저장값 = reservations.check_out(DATE)와
+                                     --   properties.checkout_time(TIME)을 결합한
+                                     --   "실제 체크아웃 시각"(예: 2026-09-12 11:00+09).
+                                     --   00:00이 아니며, 청소 착수 가능 시각의 기준점이다.
+                                     -- 전날/당일 알림 스케줄러가 이 값에서 역산하므로
+                                     --   날짜만으로는 부족하고 시각까지 필요하다.
   photo_urls         JSONB NOT NULL DEFAULT '[]'::jsonb,  -- v1.3 추가: 완료사진 URL 배열
   verified_at        TIMESTAMPTZ,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),

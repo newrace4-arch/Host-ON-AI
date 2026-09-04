@@ -4,7 +4,7 @@
 > 이 파일도 함께 갱신할 것.
 >
 > **🔴 9/3 재정정**: 청소작업 **생성 시점**을 "체크아웃 시점"에서
-> **"예약 CONFIRMED 즉시(scheduled_date=체크아웃일로 미리 세팅)"**로
+> **"예약 CONFIRMED 즉시(scheduled_at=체크아웃 시각으로 미리 세팅)"**로
 > 변경. 이유: 이미 확정된 "청소 전날·당일 자동알림" 기능이, 체크아웃
 > 당일에야 레코드가 생기면 "전날" 알림을 보낼 대상 자체가 없어 논리적
 >으로 성립 불가능했음(당근마켓 청소인력 노쇼 방지가 원래 목적이었는데
@@ -63,8 +63,11 @@ stateDiagram-v2
 ```
 [생성] 예약이 reservation_status=CONFIRMED으로 전이되는 즉시
   → CLEANING_TASKS 1건 선제 생성 (status=PENDING,
-    scheduled_date=해당 예약의 check_out 날짜)
+    scheduled_at = 해당 예약의 check_out(DATE)
+                   + 해당 숙소의 checkout_time(TIME)
+                   = 실제 체크아웃 시각, 예: 2026-09-12 11:00+09)
   → 이 시점부터 "전날/당일 자동알림" 스케줄링이 가능해짐
+    (알림 시각은 scheduled_at에서 역산하므로 날짜만으로는 부족)
 
 [실행] checkout_time 배치 스케줄러 (매시간 또는 최소 11:00 1회)
   → CONFIRMED 상태이면서 check_out+checkout_time이 현재시각을
@@ -92,7 +95,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-  R0["RESERVATIONS<br/>CONFIRMED 전이 즉시"] --> C["CLEANING_TASKS<br/>선제생성(PENDING, scheduled_date=체크아웃일)"]
+  R0["RESERVATIONS<br/>CONFIRMED 전이 즉시"] --> C["CLEANING_TASKS<br/>선제생성(PENDING, scheduled_at=체크아웃 시각)"]
   C --> N["문자API<br/>전날+당일 청소도우미 알림 발송"]
   R["RESERVATIONS<br/>checkout_time 배치로 COMPLETED 전이"] -->|"COMPLETED 전이 시"| S["MONTHLY_SETTLEMENTS<br/>해당 월 정산에 편입"]
   C -->|"체크인 임박+미완료"| A["ACTION_ITEMS<br/>🔴 지금처리 알림 생성<br/>(규칙기반, AI판단 아님)"]

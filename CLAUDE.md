@@ -251,7 +251,9 @@ C:\3rd host AI\
    재시도 카운트와 **별도로** 시스템이 1회만 자동재시도 후 폴백.
 5. **청소 생성 시점**: 예약이 `CONFIRMED` 되는 **즉시**(체크아웃
    당일 아님) `CLEANING_TASKS`를 `PENDING`으로 선제생성
-   (`scheduled_date=check_out`). 체크아웃 자체는 `checkout_time`
+   (`scheduled_at = check_out + properties.checkout_time`, 즉 실제
+   체크아웃 시각. v1.3에서 `scheduled_date`→`scheduled_at` 개명,
+   타입은 TIMESTAMPTZ 그대로). 체크아웃 자체는 `checkout_time`
    기준 배치가 별도로 `COMPLETED` 전이시킨다. `ISSUE` 상태는
    `IN_PROGRESS`/`TASK_COMPLETED`로 복귀 가능해야 함(막다른 상태 금지).
 6. **공백일 배치(00:00)**: 평일 D-7 -1,500원/D-3 -3,000원, 주말+3,000원/

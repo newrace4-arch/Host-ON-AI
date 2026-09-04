@@ -290,7 +290,7 @@ erDiagram
     enum task_status
     varchar cleaner_name
     boolean amenity_shortage
-    timestamptz scheduled_date "체크아웃일 00:00"
+    timestamptz scheduled_at "check_out + checkout_time 결합한 실제 체크아웃 시각(v1.3 개명)"
     jsonb photo_urls "v1.3 신규: 완료사진 URL 배열(append)"
     timestamptz verified_at
   }

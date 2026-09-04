@@ -225,8 +225,11 @@
 | POST | `/cleaning-tasks/{task_id}/photo` | 완료사진 업로드 |
 
 > 청소작업은 `reservation_id`당 자동 1건 생성(예약이 CONFIRMED로
-> 전이되는 즉시 서버가 자동 트리거, scheduled_date=체크아웃일로 미리
+> 전이되는 즉시 서버가 자동 트리거, `scheduled_at`=해당 예약의
+> `check_out`과 숙소 `checkout_time`을 결합한 실제 체크아웃 시각으로 미리
 > 세팅, 별도 생성 API 없음 — UNIQUE 제약과 일치, 9/3 정정).
+> ※ 이 컬럼은 v1.3에서 `scheduled_date` → `scheduled_at`으로 개명됐다
+> (타입은 `TIMESTAMPTZ` 그대로). 응답 JSON 키도 `scheduled_at`을 쓴다.
 
 > **[v1.6] `POST /cleaning-tasks/{task_id}/photo` 동작 규칙**: 업로드된
 > 사진 URL을 `CLEANING_TASKS.photo_urls`(JSONB 배열, v1.3 신규) **끝에
