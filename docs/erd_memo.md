@@ -14,6 +14,10 @@
 - **PROPERTIES의 v1.2 신규 필드**(`weekday_adjustment_enabled`,
   `holiday_adjustment_enabled`) — 공백일 자동조정 기능의 on/off
   스위치이자 단일 진실공급원(SSOT)
+- **accommodation_type ENUM 6종**(`URBAN_HOMESTAY`, `RURAL_HOMESTAY`,
+  `HANOK`, `HOSTEL`, `LODGING_FACILITY`, `GENERAL_LODGING`) —
+  관광진흥법 시행령 제2조 제1항 제3호 바목상 한 공간에 복수 유형
+  등록이 불가능해 단일 ENUM으로 확정
 - **RESERVATIONS의 3종 상태 완전 분리**(`reservation_status` /
   `refund_status` / `financial_status`) — "투숙완료+부분환불" 같은
   실무 조합을 표현하기 위한 설계

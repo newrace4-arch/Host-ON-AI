@@ -41,7 +41,7 @@ erDiagram
     코드 숙소아이디 PK
     코드 호스트아이디 FK
     텍스트 숙소명
-    목록 숙박업유형
+    목록 숙박업유형 "6종:도시민박·농어촌민박·한옥·호스텔·생활숙박·일반숙박(관광진흥법시행령)"
     목록 판매단위유형
     텍스트 주소
     숫자 기본가격
@@ -199,7 +199,7 @@ erDiagram
     bigserial property_id PK
     bigint host_id FK
     varchar name
-    enum accommodation_type
+    enum accommodation_type "URBAN_HOMESTAY·RURAL_HOMESTAY·HANOK·HOSTEL·LODGING_FACILITY·GENERAL_LODGING(관광진흥법시행령 제2조1항3호바목)"
     enum bookable_unit_type
     varchar address
     integer base_price
@@ -328,7 +328,7 @@ erDiagram
 ```mermaid
 erDiagram
   PROPERTIES ||--o{ RESERVATIONS : "숙소가 예약 접수"
-  RESERVATIONS ||--o{ CLEANING_TASKS : "체크아웃시 청소생성(1:1)"
+  RESERVATIONS ||--o{ CLEANING_TASKS : "예약확정시 선제생성(1:1)"
   RESERVATIONS ||--o{ INQUIRIES : "게스트 문의 발생"
   INQUIRIES ||--|| INQUIRY_CLASSIFICATIONS : "AI 1회호출로 분류"
   INQUIRIES ||--o{ INQUIRY_RESPONSES : "응답(1:N+최신플래그)"

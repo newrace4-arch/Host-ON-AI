@@ -52,6 +52,12 @@
 
 ## 1. ENUM 타입 정의
 
+> `accommodation_type`은 단일 값만 허용(복수 등록 불가). 근거: **관광진흥법
+> 시행령 제2조 제1항 제3호 바목** — 외국인관광 도시민박업 등 숙박업
+> 유형은 관광객 이용시설업으로 분류되며, 동일 공간에 대해 복수
+> 유형을 동시 등록할 수 없음(9/3 재조사로 정확한 조항까지 확인, 최초엔
+> "관광진흥법상"으로만 알고 있었으나 정확히는 "시행령"임).
+
 ```sql
 CREATE TYPE accommodation_type_enum AS ENUM (
   'URBAN_HOMESTAY', 'RURAL_HOMESTAY', 'HANOK', 'HOSTEL',

@@ -1,10 +1,8 @@
-# Host ON (AI) — API Contract v1.4 (최종, 5차 크로스체크 완료)
+# Host ON (AI) — API Contract v1.5 (헬스체크 엔드포인트 추가)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(v1.2) 16개 테이블을 기준으로 작성.
-> **v1.3→v1.4 변경**: IDOR 방어를 404 단일화+JOIN쿼리 방식으로 정정
-> (403/404 구분이 정보노출 취약점이라는 지적 반영), 재시도 타임아웃
-> 5초로 단축(최악지연 15.1초), FOR UPDATE와 자동재시도 간 락 경쟁
-> 없음을 명시. **1단계(데이터모델+API설계) 최종 확정.**
+> **v1.4→v1.5 변경**: 강사님 제안(Render 슬립방지) 검토 과정에서
+> 발견된 `/health` 헬스체크 엔드포인트(11절) 신규 추가.
 >
 > 모든 목록/조회 API는 **Property 데이터 격리 원칙**에 따라 `property_id`
 > 스코프가 강제된다(명세서 4절 -1번 참고). 인증은 JWT, 모든 요청은
@@ -73,6 +71,11 @@
 | POST | `/rooms/{room_id}/beds` | 침대 등록 |
 
 **POST /properties 요청 예시**
+
+> `accommodation_type` 허용값 6개(관광진흥법 시행령 제2조 제1항 제3호
+> 바목 기준): `URBAN_HOMESTAY`, `RURAL_HOMESTAY`, `HANOK`, `HOSTEL`,
+> `LODGING_FACILITY`, `GENERAL_LODGING` — 이 외 값은 400 에러.
+
 ```json
 {
   "name": "강남 3룸 독채",
@@ -186,8 +189,9 @@
 | PATCH | `/cleaning-tasks/{task_id}/status` | 상태 전이(PENDING→...→VERIFIED) |
 | POST | `/cleaning-tasks/{task_id}/photo` | 완료사진 업로드 |
 
-> 청소작업은 `reservation_id`당 자동 1건 생성(예약 생성/체크아웃 이벤트에서
-> 서버가 자동 트리거, 별도 생성 API 없음 — UNIQUE 제약과 일치).
+> 청소작업은 `reservation_id`당 자동 1건 생성(예약이 CONFIRMED로
+> 전이되는 즉시 서버가 자동 트리거, scheduled_date=체크아웃일로 미리
+> 세팅, 별도 생성 API 없음 — UNIQUE 제약과 일치, 9/3 정정).
 
 ---
 
@@ -287,7 +291,17 @@
 
 ---
 
-## 11. Claude API 장애 대응 (전체 도메인 공통, 신규)
+## 11. 헬스체크 엔드포인트 (인프라 공통, 신규)
+
+> Render 무료 플랜의 15분 슬립 방지용 외부 핑(UptimeRobot/GitHub
+> Actions 등) 대상. 비즈니스 로직 API로 핑을 보내면 매번 DB 조회가
+> 발생해 불필요하게 무거우므로, 전용 경량 엔드포인트를 별도로 둔다.
+
+| Method | Endpoint | 설명 |
+|---|---|---|
+| GET | `/health` | 인증 불필요, DB 조회 없이 즉시 `{"status": "ok"}` 반환 |
+
+## 12. Claude API 장애 대응 (전체 도메인 공통, 신규)
 
 > 지금까지 설계에 빠져있던 부분 — Claude API가 타임아웃되거나
 > 응답불가일 때 시스템이 멈추지 않도록 명시.
