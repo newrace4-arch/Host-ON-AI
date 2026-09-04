@@ -1,0 +1,17 @@
+{
+  "name": "ical-test-server",
+  "version": "1.0.0",
+  "description": "Mock iCal server for 3rd Host AI testing",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ical-generator": "^7.1.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
