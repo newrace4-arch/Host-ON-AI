@@ -1,0 +1,29 @@
+# Host ON (AI) — 로컬 개발용 PostgreSQL
+# 이미지: pgvector/pgvector:pg16 (PostgreSQL 16 + pgvector 확장 사전설치)
+#   - DB명세서 5절: PostgreSQL 15 이상 필수
+#     (ACTION_ITEMS의 ON DELETE SET NULL (컬럼목록) 문법이 PG15+ 전용)
+#   - Supabase도 15+ 이므로 dev/prod parity 유지
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: host_on_ai_db
+    restart: unless-stopped
+    environment:
+      # 로컬 개발 전용 자격증명(외부 노출 없음, 포트도 localhost 바인딩).
+      #   운영(Supabase) 접속정보는 여기가 아니라 .env에만 두고 커밋하지 않는다.
+      POSTGRES_USER: hoston
+      POSTGRES_PASSWORD: hoston_local_dev
+      POSTGRES_DB: host_on_ai
+      TZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - host_on_ai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hoston -d host_on_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  host_on_ai_pgdata:
