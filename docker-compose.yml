@@ -1,11 +1,18 @@
 # Host ON (AI) — 로컬 개발용 PostgreSQL
-# 이미지: pgvector/pgvector:pg16 (PostgreSQL 16 + pgvector 확장 사전설치)
+# 이미지: pgvector/pgvector:pg17 (PostgreSQL 17 + pgvector 확장 사전설치)
 #   - DB명세서 5절: PostgreSQL 15 이상 필수
 #     (ACTION_ITEMS의 ON DELETE SET NULL (컬럼목록) 문법이 PG15+ 전용)
-#   - Supabase도 15+ 이므로 dev/prod parity 유지
+#   - [2026-09-05] pg16 → pg17로 변경. 프로덕션 Supabase가 PostgreSQL
+#     17.6으로 확인돼(Gemini 교차검증 완료) 로컬과 **메이저 버전을 일치**
+#     시켰다. 명세서 5절이 요구하는 것은 "15 이상"이 아니라 정확히는
+#     "로컬 Docker와 Supabase를 같은 메이저로 맞출 것"(dev/prod parity)
+#     이므로, 16과 17로 갈라진 상태를 그대로 두면 안 된다.
+#   - 버전을 다시 바꿀 때는 이 파일만 고치지 말고 반드시
+#     `docker compose down -v` → `alembic upgrade head` → 회귀테스트까지
+#     돌려 스키마가 새 메이저에서 그대로 재현되는지 확인할 것.
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     container_name: host_on_ai_db
     restart: unless-stopped
     environment:
