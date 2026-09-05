@@ -428,3 +428,4 @@ C:\3rd host AI\
 - `docs/troubleshooting.md` — 개발 과정 문제/원인/해결 기록
 - `BACKUP_RULES.md` — 이 파일의 백업 규칙 원본(상세 설명 포함)
 - `.gitignore` — 이미 구성됨, 환경변수/캐시/빌드산출물 제외 처리됨
+- `docs/video_recording_setup.md` — 발표영상 녹화(OBS)·편집(Clipchamp) 환경 설정 및 10/7~10/10 실행계획
