@@ -1,6 +1,10 @@
-# Host ON (AI) — API Contract v1.6 (9/4 1단계 검증 반영)
+# Host ON (AI) — API Contract v1.7 (9/5 서비스 레이어 구현 반영)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v1.6→v1.7 변경 (9/5 예약 서비스 레이어 구현 중 확정)**:
+> 1. 교차 판매단위 기간 충돌 에러를 `409 RESERVATION_OVERLAP`으로 명시(4절).
+>    DB EXCLUDE가 같은 단위끼리만 막는다는 사실은 명세서에 있었으나,
+>    그때 무엇을 반환할지가 API Contract에 없어 구현 시 새로 확정했다.
 > **v1.5→v1.6 변경 (9/4 1단계 검증에서 발견된 불일치 정정)**:
 > 1. `GET /reservations/{id}` 응답의 `net_payout` → **`net_amount`**로 정정.
 >    (`net_payout`은 MONTHLY_SETTLEMENTS의 컬럼명이라 잘못 쓰인 것)
@@ -181,6 +185,21 @@
 > | PROPERTY | room_id 또는 bed_id가 NOT NULL | 400 | `INVALID_UNIT_HIERARCHY` |
 > | ROOM | room_id가 NULL 이거나 bed_id가 NOT NULL | 400 | `ROOM_ID_REQUIRED` |
 > | BED | room_id 또는 bed_id가 NULL | 400 | `BED_ID_REQUIRED` |
+
+> **[v1.7 추가] 교차 판매단위 기간 충돌은 `409 Conflict`, code
+> `RESERVATION_OVERLAP`**. DB의 EXCLUDE 제약 3종은 **같은 판매단위끼리만**
+> 겹침을 막으므로(PROPERTY↔PROPERTY, ROOM↔ROOM, BED↔BED), 독채 예약과 그
+> 하위 객실/침대 예약 사이의 충돌은 `POST /reservations` 서비스 레이어가
+> 직접 조회해 차단한다(명세서 2.6.1절 경고, troubleshooting.md 1번).
+> 응답 message에는 충돌한 예약번호를 함께 담는다.
+>
+> | 상황 | HTTP | code |
+> |---|---|---|
+> | 같은 숙소에서 기간이 겹치는 다른 단위 예약 존재 | 409 | `RESERVATION_OVERLAP` |
+> | 동시성으로 DB EXCLUDE에 걸린 경우(마지막 방어선) | 409 | `RESERVATION_OVERLAP` |
+>
+> 겹침 판정은 반개구간이다 — **체크아웃일과 다음 예약의 체크인일이 같은 날인
+> 연박 이어짐은 충돌이 아니다**(EXCLUDE의 `tsrange` 판정과 동일).
 
 > `PATCH /reservations/{id}/status`는 3개 필드(reservation_status/
 > refund_status/financial_status) 전부 Optional로 받는 단일 엔드포인트로
