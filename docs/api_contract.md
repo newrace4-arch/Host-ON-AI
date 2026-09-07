@@ -1,6 +1,17 @@
-# Host ON (AI) — API Contract v1.9 (9/7 크로스체크 반영)
+# Host ON (AI) — API Contract v2.0 (9/7 action-items 응답 스펙 확정)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v1.9→v2.0 변경 (9/8 대시보드 구현 선행 작업)**:
+> 1. **목록 응답 `meta` 규약 신설**(0절). `?page`/`size` 파라미터는 있었으나
+>    응답에 총건수·페이지 정보를 담는 방법이 없었다. `GET /properties`는
+>    구조적으로 페이지네이션 대상이 아니므로 예외로 명시.
+> 2. `GET /properties/{property_id}/action-items` **응답 스펙 신규 확정**(9절).
+>    9필드 전부 `ACTION_ITEMS` 실재 컬럼이며 파생 필드 없음. 정렬·쿼리
+>    파라미터·`category` 값 현황·생성 경로도 함께 기록.
+> 3. `PATCH /action-items/{id}/resolve` **요청·응답 스펙 확정**(9절).
+>    `status`는 항상 `RESOLVED`로 전이하며, **가격 계열 액션에는 400으로
+>    거부하는 서버 가드**를 둔다.
+> 4. 가격 추천 카드 승인 시 호출 경로 명시(13절) — `resolve`가 아니라 `apply`.
 > **v1.8→v1.9 변경 (9/7 크로스체크에서 발견)**:
 > 1. `conflict_count`를 **키 고정·값 nullable** 계약으로 정정(4.1절).
 >    v1.8은 "계산 실패 시 필드를 생략"이라고 적었으나 같은 절이 "응답
@@ -51,6 +62,26 @@
 
 - 응답 포맷: `{ "data": ..., "error": null }` 또는 실패시 `{ "data": null, "error": { "code": "...", "message": "..." } }`
 - 페이지네이션: `?page=1&size=20` (목록 API 공통)
+- **목록 응답 메타 규약 (v2.0 신설)**: **페이지네이션 파라미터(`page`,
+  `size`)를 지원하는 컬렉션 엔드포인트**는 `meta` 객체를 포함한다.
+  ```json
+  { "data": [ ... ],
+    "meta": { "total": 47, "page": 1, "size": 20 },
+    "error": null }
+  ```
+  근거: 부분만 받아온 응답에서 `data` 길이로는 전체 건수를 알 수 없다.
+
+  > **예외**: 목록이 아니라 **전체 컬렉션을 반환하는 것이 API의 목적**인
+  > 엔드포인트는 `meta`를 생략하고 기존 형식을 유지한다.
+  >
+  > 해당 예 — **`GET /properties`**: `PropertySwitcher` 드롭다운과 대시보드
+  > 병렬 호출의 **입력**으로서 항상 전체를 반환해야 하므로 페이지네이션이
+  > 구조적으로 적용될 수 없다. 일부만 받으면 전환 목록에 숙소가 누락되고
+  > 대시보드 합산에서도 빠진다.
+  >
+  > 이 예외는 **건수가 적어서가 아니라 용도 때문**이다. 향후 숙소 수가 크게
+  > 늘어 목록 자체를 페이지네이션해야 할 상황이 오면 이 문장을 근거로
+  > 재검토한다.
 - 날짜: `YYYY-MM-DD`, 일시: ISO8601(`YYYY-MM-DDTHH:mm:ssZ`)
 - 소유권 검증: 모든 `property_id` 경로/쿼리는 **요청자(JWT)의 host_id가 해당 Property를 실제 소유하는지** 서비스 레이어에서 검증(IDOR 방지, 명세서 확정 원칙)
 - **`property_id`가 URL에 없는 하위 리소스 엔드포인트**(`GET /reservations/{id}`,
@@ -590,6 +621,147 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 | GET | `/properties/{property_id}/action-items?status=OPEN` | 🔴🟡🟢 알림 목록 |
 | PATCH | `/action-items/{action_id}/resolve` | 처리 완료 표시 |
 
+> **생성 엔드포인트(`POST`)가 없다.** `ACTION_ITEMS`는 **시스템 배치·트리거로만
+> 생성**되며(청소 지연 감지, 서류 만료 임박, 가격 조정 추천 등) 호스트가 직접
+> 추가하지 않는다. 화면에도 "액션 추가" 기능을 두지 않는다.
+
+### 9.1 GET /properties/{property_id}/action-items 응답 스펙 (v2.0 신규 확정)
+
+**응답 9필드는 전부 `ACTION_ITEMS` 실재 컬럼이며 파생 필드가 없다.**
+
+```json
+{
+  "data": [
+    {
+      "action_id": 91,
+      "property_id": 1,
+      "reservation_id": 501,
+      "risk_level": "RED_NOW",
+      "category": "CLEANING_DELAY",
+      "title": "체크인 2시간 전인데 청소 미완료",
+      "content": "강남 3룸 독채 · 오늘 16:00 체크인",
+      "status": "OPEN",
+      "created_at": "2026-09-08T09:12:00Z"
+    }
+  ],
+  "meta": { "total": 47, "page": 1, "size": 20 },
+  "error": null
+}
+```
+
+| 필드 | 출처 컬럼(명세서 2.15절) | 타입 |
+|---|---|---|
+| `action_id` | `action_id` | BIGSERIAL |
+| `property_id` | `property_id` | BIGINT NOT NULL |
+| `reservation_id` | `reservation_id` | BIGINT **nullable**(서류만료 등 예약과 무관한 건) |
+| `risk_level` | `risk_level` | `action_risk_level_enum` NOT NULL |
+| `category` | `category` | VARCHAR(50) NOT NULL |
+| `title` | `title` | TEXT NOT NULL |
+| `content` | `content` | TEXT nullable |
+| `status` | `status` | `action_status_enum` NOT NULL DEFAULT `'OPEN'` |
+| `created_at` | `created_at` | TIMESTAMPTZ NOT NULL DEFAULT `now()` |
+
+**쿼리 파라미터**
+
+| 파라미터 | 근거 |
+|---|---|
+| `status` | 기존(위 표에 이미 있음) |
+| `risk_level` | **v2.0 신규** — 아래 근거 참고 |
+| `page` / `size` | 0절 공통 규약 |
+
+> `risk_level` 필터는 인덱스
+> `idx_action_items_property_status(property_id, status, risk_level)`의
+> **세 번째 키**다. **`status`와 함께 사용할 때 인덱스로 커버되며**, `status`
+> 없이 `risk_level`만 필터하면 앞 키를 건너뛰어 인덱스 효율이 떨어진다.
+> **두 필터를 함께 쓰는 것을 전제한다.**
+>
+> **`category` 필터는 1차에 넣지 않는다.** 인덱스에 없어 필터링 시 인덱스를
+> 못 쓰며, `/actions` 화면의 카테고리 탭은 프론트에서 처리한다.
+>
+> **`limit` 파라미터를 신설하지 않는다.** 0절의 `size`가 같은 역할을 하며
+> 의미가 겹친다.
+
+**정렬**
+
+```sql
+ORDER BY risk_level ASC, created_at DESC
+```
+
+`action_risk_level_enum`이 `RED_NOW` → `YELLOW_TODAY` → `GREEN_AUTO` 순으로
+선언돼 있어 **PostgreSQL의 ENUM 비교가 선언 순서를 따른다.** 별도 `CASE` 문이
+불필요하다.
+
+> ※ `created_at`은 인덱스에 없어 **`risk_level`이 같은 항목 간 정렬은 별도로
+> 수행된다.** `property_id` + `status`로 좁힌 뒤라 대상 건수가 적어 실사용에서
+> 문제되지 않는다.
+
+**두 화면이 같은 엔드포인트를 사용한다**
+
+| 화면 | 호출 | 용도 |
+|---|---|---|
+| `/dashboard` 액션 프리뷰 | `?status=OPEN&size=5` | 조회·이동만(인라인 처리 버튼 없음) |
+| `/actions` 전체 큐 | `?status=OPEN&size=20` | 전체 큐와 처리 |
+
+> ※ 대시보드 프리뷰의 **"전체 N건 처리하러 가기"** 표시에는 이 응답의
+> `meta.total`이 아니라 **`dashboard/summary`의 `open_action_count`를
+> 사용한다.** 대시보드는 이미 `summary`를 호출하므로 같은 숫자를 두 경로로
+> 얻을 이유가 없고, **두 값의 조회 시점이 어긋날 수 있다.**
+> (`GET /properties`에 요약 지표를 넣지 않기로 한 것과 같은 근거 — 2절 참고)
+
+**`category` 값 현황 (확정하지 않음)**
+
+명세서 2.15절이 `category`를 `VARCHAR(50)`으로 두고 *"category 정의가 아직
+세밀하지 않아 DB 제약으로 못박기엔 이름"*이라고 밝히고 있으므로 **허용값을
+확정하지 않는다.** 현재 문서에 등장하는 값만 참고로 기록한다.
+
+| 값 | 출처 |
+|---|---|
+| `CLEANING_DELAY` | 명세서 2.15절 검증 예시 |
+| `COMPLIANCE_EXPIRY` | 명세서 2.15절 검증 예시 |
+| `PRICE_ADJUSTMENT` | 본 문서 13절 |
+| `PRICE_NEGLECT` | 본 문서 13절 |
+
+- **각 기능 구현 시 값이 추가될 수 있다.**
+- **신규 `category`를 추가할 때는 이 목록과 프론트 카드 컴포넌트 분기를 함께
+  갱신한다.** `VARCHAR`라 **DB가 오타를 막지 못하며**, 오타가 들어가면 "동일
+  `reservation_id` + `category` + `status='OPEN'` 조합 재사용" idempotency
+  로직이 깨져 **같은 알림이 중복 생성된다**(명세서 2.15절).
+
+### 9.2 PATCH /action-items/{action_id}/resolve 스펙 (v2.0 신규 확정)
+
+**요청 본문 없음** — 경로 파라미터만 받는다.
+
+**응답**: 갱신된 레코드 9필드를 그대로 반환한다(9.1과 동일 구조, 단건).
+
+```json
+{ "data": { "action_id": 91, "status": "RESOLVED", "...": "나머지 7필드 동일" },
+  "error": null }
+```
+
+**`status`는 항상 `RESOLVED`로 전이한다.**
+
+**서버 가드 — 가격 계열 액션 거부**
+
+| 상황 | HTTP | code |
+|---|---|---|
+| `category`가 `PRICE_ADJUSTMENT` 또는 `PRICE_NEGLECT`인 액션에 호출 | 400 | `PRICE_ACTION_REQUIRES_APPLY` |
+
+가격 카드는 `POST /properties/{property_id}/price-recommendations/apply`를
+거쳐야 **Mock 반영이 함께** 이뤄진다. `resolve`만 허용하면 가격 반영 없이
+카드만 닫히므로 서버에서 막는다(13절 참고).
+
+**IDOR 방어**: 0절 공통 원칙대로, **소유권 불일치와 부존재를 구분하지 않고
+`404 RESOURCE_NOT_FOUND`로 통일**한다. 이 엔드포인트는 경로에 `property_id`가
+없으므로 조회 쿼리 자체에 소유권 조건을 묶는다.
+
+> **이 엔드포인트는 `AUTO_RESOLVED`를 세팅하지 않는다.** 시스템이 자동으로
+> 닫는 경로로 추정되나 **문서에 로직 정의가 없다**(9/7 확인). ENUM 정의와 ERD
+> 표기에만 등장하며 언제 누가 세팅하는지 설명이 없고, `risk_level='GREEN_AUTO'`
+> 와의 관계도 미정이다.
+>
+> **10/6 액션센터 구현 전까지 `GREEN_AUTO` 항목의 실질적 자동 해결은 동작하지
+> 않는다.** 트리거 규칙과 함께 그 시점에 확정한다.
+
 ---
 
 ## 10. 컴플라이언스 (CHECKLIST_ITEMS)
@@ -680,6 +852,22 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > **가격조정은 AI가 아니라 규칙기반이다.** 응답의 `reason`은 LLM 생성
 > 문장이 아니라 6.2절 조정폭 표에서 그대로 가져온 고정 문자열이다
 > (명세서 4절 원칙과 동일 — "AI가 최적가를 계산한다"고 설명하지 않음).
+
+**`action-items`와의 관계 및 호출 경로 (v2.0 명시)**
+
+두 엔드포인트는 **같은 레코드를 가리킨다.** 가격 추천은 전용 테이블 없이
+`ACTION_ITEMS` 카드로만 표현되므로(위 설계 원칙), 같은 행이
+`GET /properties/{id}/action-items`에도 `category='PRICE_ADJUSTMENT'` 또는
+`'PRICE_NEGLECT'`로 나타난다.
+
+- `/actions` 화면에서 **가격 카드를 승인할 때는**
+  `POST /properties/{property_id}/price-recommendations/apply`를 호출한다.
+- **`PATCH /action-items/{action_id}/resolve`를 쓰면 안 된다.** `apply`가 Mock
+  반영과 `RESOLVED` 전이를 **함께** 수행하므로, `resolve`만 호출하면 **가격
+  반영 없이 카드만 닫힌다.**
+- **9.2절의 서버 가드가 이 실수를 막는다**(`400 PRICE_ACTION_REQUIRES_APPLY`).
+- **프론트에서도 카드 컴포넌트를 카테고리별로 분리해 각자 자기 엔드포인트를
+  호출하게 한다.** 공통 카드에 `onResolve` 하나만 두면 분기를 놓치기 쉽다.
 
 ---
 
