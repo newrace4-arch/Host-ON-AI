@@ -1,6 +1,15 @@
-# Host ON (AI) — API Contract v1.7 (9/5 서비스 레이어 구현 반영)
+# Host ON (AI) — API Contract v1.8 (9/7 UI/UX 설계 반영)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v1.7→v1.8 변경 (9/7 UI/UX 설계 중 확정)**:
+> 1. `GET /properties/{property_id}/dashboard/summary` **응답 스펙 신규 확정**(4절).
+>    9/7 확인 결과 이 엔드포인트는 표 한 행만 있고 응답 스펙이 문서 어디에도
+>    없었다. 이 문서가 응답 스펙의 원본(SSOT)이 된다. 필드 11개 전부 기존
+>    컬럼 집계이며 **DB 스키마 변경 없음**.
+> 2. `GET /properties` **응답 스펙 신규 확정**(2절). 마찬가지로 응답 예시가
+>    없던 엔드포인트다.
+> 3. **통합 대시보드 조회 방식 명시**(4절) — 교차 숙소 집계 엔드포인트를
+>    추가하지 않고 프론트가 N병렬 호출 후 합산한다.
 > **v1.6→v1.7 변경 (9/5 예약 서비스 레이어 구현 중 확정)**:
 > 1. 교차 판매단위 기간 충돌 에러를 `409 RESERVATION_OVERLAP`으로 명시(4절).
 >    DB EXCLUDE가 같은 단위끼리만 막는다는 사실은 명세서에 있었으나,
@@ -107,6 +116,41 @@
 > GET/PATCH 응답에도 위 두 필드(공백일 자동조정 on/off) 반드시 포함할 것
 > (2차 크로스체크로 발견된 누락, DB v1.2 필드와 정확히 일치시켜야 함).
 
+**GET /properties 응답 예시 (v1.8 신규 확정)**
+
+```json
+{
+  "data": [
+    { "property_id": 1, "name": "강남 3룸 독채",
+      "accommodation_type": "URBAN_HOMESTAY", "bookable_unit_type": "PROPERTY" },
+    { "property_id": 2, "name": "홍대 호스텔",
+      "accommodation_type": "HOSTEL", "bookable_unit_type": "BED" }
+  ],
+  "error": null
+}
+```
+
+| 필드 | 출처 | 용도 |
+|---|---|---|
+| `property_id` | `PROPERTIES.property_id` | 라우팅 키, 대시보드 병렬 호출 대상 식별 |
+| `name` | `PROPERTIES.name` | PropertySwitcher 드롭다운 표시 텍스트 |
+| `accommodation_type` | `PROPERTIES.accommodation_type` | 동명 숙소 구분 + 유형 뱃지 표시 |
+| `bookable_unit_type` | `PROPERTIES.bookable_unit_type` | **예약 생성 모달이 room_id/bed_id 필수 여부를 이 값으로 분기**한다 |
+
+> `bookable_unit_type`을 목록에 포함하는 이유: 4절의 400 에러 3종
+> (`INVALID_UNIT_HIERARCHY`/`ROOM_ID_REQUIRED`/`BED_ID_REQUIRED`)이 전부 이 값을
+> 기준으로 판정되므로, 목록에 없으면 예약 모달을 열 때마다 숙소 상세를
+> 재호출해야 한다.
+>
+> `address`·`base_price`·`lower_bound_price`·`checkin_time`·`checkout_time`·
+> `*_adjustment_enabled`는 **포함하지 않는다** — `/settings` 화면 소관이며,
+> 드롭다운에는 쓰이지 않는다.
+>
+> **요약 지표(오픈 액션 수·오늘 체크인 건수 등)를 이 응답에 넣지 않는다.**
+> 4절 `dashboard/summary`가 "캐싱 없이 매요청 실시간 집계 — 개별 API와 항상
+> 일치 보장"을 명시하고 있어, 같은 지표를 목록 API에도 두면 두 API가 서로
+> 다른 시점의 값을 반환해 그 보장이 깨진다.
+
 ---
 
 ## 3. 채널 연동 (CHANNEL_CONNECTIONS)
@@ -147,6 +191,172 @@
 | POST | `/reservations` | 예약 생성(iCal 동기화 또는 수동, bookable_unit_type 검증 포함) |
 | PATCH | `/reservations/{reservation_id}/status` | 예약상태/환불상태/정산상태 개별 수정 |
 | GET | `/properties/{property_id}/dashboard/summary` | 대시보드 통합 요약(캘린더요약+오픈액션수+오늘turnover건수, **캐싱 없이 매요청 실시간 집계** — 개별 API와 항상 일치 보장) |
+
+### 4.1 GET /properties/{property_id}/dashboard/summary 응답 스펙 (v1.8 신규 확정)
+
+> 9/7 확인 결과 이 엔드포인트는 위 표 한 행만 있고 응답 스펙이 문서 어디에도
+> 없었다. **이 절이 응답 스펙의 원본(SSOT)이다.** 아래 11개 필드는 전부 기존
+> 16개 테이블의 실재 컬럼에서 집계하며 **DB 스키마 변경을 요구하지 않는다.**
+
+```json
+{
+  "data": {
+    "property_id": 1,
+    "property_name": "강남 3룸 독채",
+
+    "today_checkin_count": 2,
+    "today_checkout_count": 1,
+    "today_turnover_count": 1,
+
+    "open_action_count": 5,
+    "red_now_count": 1,
+    "yellow_today_count": 2,
+    "green_auto_count": 2,
+
+    "cleaning_pending_count": 2,
+    "cleaning_issue_count": 0,
+
+    "conflict_count": 1
+  },
+  "error": null
+}
+```
+
+| 필드 | 집계 근거 |
+|---|---|
+| `property_id` / `property_name` | `PROPERTIES.property_id` / `PROPERTIES.name`. 프론트가 3~5개 숙소분을 병렬 호출해 합산하므로 **어느 숙소의 응답인지 식별이 필요**하다 |
+| `today_checkin_count` | `RESERVATIONS` `WHERE check_in = CURRENT_DATE AND reservation_status IN ('CONFIRMED','MODIFIED')`. 인덱스 `idx_reservations_dates(property_id, check_in, check_out)` |
+| `today_checkout_count` | `RESERVATIONS` `WHERE check_out = CURRENT_DATE` (같은 인덱스) |
+| `today_turnover_count` | **같은 `(property_id, room_id, bed_id)` 조합**에서 당일 체크아웃 예약과 당일 체크인 예약이 **둘 다 존재하는 단위의 수**. 아래 정의 참고 |
+| `open_action_count` | `ACTION_ITEMS` `WHERE status = 'OPEN'` (`action_status_enum`, 명세서 2.15절) |
+| `red_now_count` / `yellow_today_count` / `green_auto_count` | `ACTION_ITEMS` `WHERE status='OPEN' GROUP BY risk_level` (`action_risk_level_enum`: `RED_NOW`/`YELLOW_TODAY`/`GREEN_AUTO`, 명세서 111행). 인덱스 `idx_action_items_property_status(property_id, status, risk_level)`가 **정확히 이 쿼리 형태와 일치** |
+| `cleaning_pending_count` | `CLEANING_TASKS` `WHERE task_status IN ('PENDING','ASSIGNED','IN_PROGRESS')`. 인덱스 `idx_cleaning_tasks_property_status` |
+| `cleaning_issue_count` | `CLEANING_TASKS` `WHERE task_status = 'ISSUE'` |
+| `conflict_count` | `is_conflict = true`인 예약 수. `is_conflict`는 **DB 컬럼이 아니라 서버가 매 조회 시 계산하는 파생 필드**다(본 절 `GET /reservations/{id}` 주석 참고) |
+
+**`today_turnover_count` 정의 (실제 운영 규칙 기반)**
+
+체크아웃 **11:00** / 체크인 **16:00** 운영이므로, 같은 판매단위에서 당일
+퇴실과 당일 입실이 겹치면 **청소 가용 시간이 5시간뿐**이고 당일 청소 완료가
+필수가 된다. 그래서 이 건수는 단순 `today_checkout_count`와 **다른 개념**이며,
+호스트가 오늘 반드시 처리해야 할 작업량을 나타낸다.
+
+> **15:00 비밀번호 안내 메시지는 이 집계와 무관하다.** 그것은 turnover 여부와
+> 관계없이 도는 별도 알림 스케줄이므로 `today_turnover_count`에 포함하지 않는다.
+
+**`conflict_count` 포함 이유와 실패 처리**
+
+iCal을 여러 OTA에서 받는 구조상 더블부킹이 실제로 발생 가능하며, 호스트가
+대시보드에서 **가장 먼저 알아야 할 정보**다(숙소별 캘린더를 일일이 열어보게
+해서는 안 된다). 다만 파생 필드이므로 **계산에 실패하면 이 필드만 생략하고
+나머지 10개는 정상 반환한다(Graceful Degradation)** — CLAUDE.md의 iCal 외부연동
+방어 원칙과 같은 계열로, 일부 실패가 화면 전체를 못 쓰게 만들지 않는다.
+
+**포함하지 않는 필드**
+
+`staying_count`(현재 투숙 중)는 넣지 않는다. 나머지 지표가 전부 "오늘 무엇을
+해야 하는가"인 반면 투숙 중 인원은 호스트의 행동을 유발하지 않으며, 3~5개
+숙소분을 합산해 표시하는 화면에서 필드 수를 늘리면 KPI 영역이 과밀해진다.
+
+**UI 표기 규칙**
+
+`risk_level`을 화면에 표시할 때 문구는 **"위험도"가 아니라 "우선순위"**를 쓴다
+(CLAUDE.md: "ActionItems.risk_level은 AI의 법적/안전 판단이 아니라 규칙기반 운영
+우선순위다").
+
+> `RED_NOW` 판정의 "체크인 임박" 기준 시각은 **`PROPERTIES.checkin_time`에서
+> 읽는다**. 숙소마다 체크인 시각이 다를 수 있으므로 하드코딩하지 않는다.
+> (실제 판정 로직 구현은 10/6 액션센터 태스크 소관이며, 여기서는 원칙만 남긴다)
+
+**체크인/체크아웃 시각과 turnover의 관계**
+
+`PROPERTIES.checkin_time` / `checkout_time`은 숙소별 설정값이며, 스키마
+기본값(`'15:00'`)과 실제 운영값은 다를 수 있다. 아래는 개발자가 실제 운영
+중인 숙소(마포, PROPERTY 단위 판매)의 규칙으로, turnover 지표가 필요한
+배경이다.
+
+> ⚠️ **아래 규칙은 두 층으로 나뉜다. 이 구분을 반드시 지킬 것.**
+
+**(1) 게스트 고지 사항 — 공식 규정**
+
+- 체크아웃 11:00
+- 체크인 16:00
+- 비밀번호 안내 발송 15:00
+- 조기 체크인 / 연장 체크아웃을 원하는 경우 **2일 전 사전협의 필수**
+- **연장·조기 이용 시 1시간당 2만원의 추가요금이 발생할 수 있음**
+  (숙소 안내·예약 확인 메시지에 비고로 항상 표시한다)
+
+**(2) 호스트 내부 재량 — 게스트에게 고지하지 않음**
+
+아래는 호스트가 그날 상황을 보고 개별 판단하는 사항이며, 사전에 안내하거나
+시스템이 자동으로 노출하지 않는다.
+
+- 12:00까지의 체크아웃 연장 가능 여부
+  (청소 직원 일정이 사전 배치되어 12:00이 실질 한계. 게스트가 먼저
+  문의하지 않으면 안내하지 않는다)
+- 15:00 조기 체크인 수용 여부
+- 당일 체크아웃이 없는 단위의 12:00 이후 체크인 수용 여부
+- 실무상 1~2시간 정도 배려하는 관행
+- 추가요금의 실제 부과 여부
+
+**🔴 AI 게스트 응대에서의 취급**
+
+**(2)의 내용은 `KNOWLEDGE_CHUNKS`에 등록하지 않는다.** RAG 검색 결과에
+포함되면 AI가 호스트를 대신해 재량 사항을 약속하게 되며, 이는 호스트가 그날
+상황(청소 일정, 다음 예약)을 보고 판단해야 할 문제다. 지식베이스에는 (1)의
+공식 규정만 등록한다.
+
+조기 체크인·연장 체크아웃 문의가 들어오면 AI는 "2일 전 사전협의가 필요하며
+추가요금이 발생할 수 있다"는 공식 안내까지만 하고, 수용 여부는 호스트 승인
+대기로 넘긴다.
+
+**turnover가 제약하는 것**
+
+청소 일정이 사전 배치되므로 체크아웃 측 한계(12:00)는 turnover 유무와
+무관하게 동일하다. turnover가 실제로 제약하는 것은 **체크인 측**이다.
+turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turnover가 발생한
+단위는 청소가 끝나야 하므로 16:00을 지켜야 한다.
+
+즉 `today_turnover_count`는 단순 집계가 아니라, **호스트가 그날 해당 단위의
+체크인 시각을 앞당길 수 있는지를 판정하는 내부 지표**다. 게스트에게 노출되는
+값이 아니다.
+
+**구현 시 주의**
+
+- 시각을 하드코딩하지 않는다. `PROPERTIES.checkin_time` / `checkout_time`에서
+  읽는다.
+- 추가요금(1시간당 2만원)은 호스트 재량이므로 **자동 부과·자동 계산 로직을
+  만들지 않는다.** 현재 스키마에 저장할 컬럼이 없으며 이번 범위에서 추가하지
+  않는다.
+- 2일 전 사전협의 요청은 현재 시스템이 관리하지 않는다. 호스트가 채널
+  메시지로 직접 처리하는 운영 업무다.
+- 15:00 비밀번호 발송은 turnover 집계에 포함하지 않는다. 다만 체크인 1시간
+  전이므로 향후 액션센터 `RED_NOW` 판정(체크인 임박 + 청소 미완료)의 기준점
+  후보다. 실제 판정은 10/6 액션센터 태스크 소관이며 여기서는 배경으로만
+  기록한다.
+
+### 4.2 통합 대시보드 조회 방식 (v1.8 신규 명시)
+
+대시보드는 **전체 숙소 통합 뷰**다. 백엔드에 교차 숙소 집계 엔드포인트를
+**새로 만들지 않는다.** 프론트가 `GET /properties`로 목록을 받은 뒤 각 숙소의
+`dashboard/summary`를 **병렬 호출해 합산**한다. 숙소 하나의 호출이 실패해도
+나머지는 정상 렌더링한다.
+
+근거:
+1. 기검증된 백엔드(16테이블, `reservation_service.py`, 회귀테스트 20개 통과)를
+   전혀 건드리지 않는다 — 안정성 우선.
+2. 각 호출이 단일 숙소 쿼리이므로 **명세서 611행의 성능 보증 범위 안**에 있다
+   ("조인 1회로 충분하며, 위 인덱스로 성능 문제 없이 동작합니다").
+3. P1에서 숙소 수가 크게 늘면 통합 엔드포인트를 추가할 수 있고, 그때 필요한
+   인덱스는 **이미 전부 존재한다**(`idx_properties_host`,
+   `idx_reservations_property`, `idx_reservations_dates`,
+   `idx_cleaning_tasks_property_status`, `idx_action_items_property_status`).
+   즉 지금 결정이 나중을 막지 않는다.
+
+> **PropertySwitcher는 대시보드의 필터가 아니다.** 개별 화면(캘린더/청소/정산
+> 등)에 들어갈 때의 **컨텍스트 전환 도구**다.
+
+---
 
 **GET /reservations/{id} 응답 예시**
 ```json
