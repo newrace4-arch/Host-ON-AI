@@ -695,6 +695,13 @@ ORDER BY risk_level ASC, created_at DESC
 > 수행된다.** `property_id` + `status`로 좁힌 뒤라 대상 건수가 적어 실사용에서
 > 문제되지 않는다.
 
+> **처리 이력의 한계 (1차 범위)**: `ACTION_ITEMS`에 **`resolved_at` 컬럼이
+> 없다.** 따라서 `?status=RESOLVED` 조회는 **처리 시각이 아니라 생성 시각
+> (`created_at DESC`) 기준**으로만 정렬된다. 오래전 생성된 항목을 최근에
+> 처리한 경우 목록 하단에 남으므로, **"최근에 무엇을 처리했나"는 1차에서
+> 제공하지 않는다.** `resolved_at` 추가는 액션센터 구현 시점(10/6)에
+> resolve 로직과 함께 다룬다(troubleshooting 24번).
+
 **두 화면이 같은 엔드포인트를 사용한다**
 
 | 화면 | 호출 | 용도 |
