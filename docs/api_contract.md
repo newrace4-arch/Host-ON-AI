@@ -1,6 +1,13 @@
-# Host ON (AI) — API Contract v1.8 (9/7 UI/UX 설계 반영)
+# Host ON (AI) — API Contract v1.9 (9/7 크로스체크 반영)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v1.8→v1.9 변경 (9/7 크로스체크에서 발견)**:
+> 1. `conflict_count`를 **키 고정·값 nullable** 계약으로 정정(4.1절).
+>    v1.8은 "계산 실패 시 필드를 생략"이라고 적었으나 같은 절이 "응답
+>    11필드"를 명시하고 있어 모순이었다.
+> 2. `today_turnover_count` 집계 시 **`IS NOT DISTINCT FROM`** 사용을
+>    명시(4.1절). PROPERTY 단위 예약은 `room_id`/`bed_id`가 NULL이라
+>    일반 등호 비교로는 집계되지 않는다.
 > **v1.7→v1.8 변경 (9/7 UI/UX 설계 중 확정)**:
 > 1. `GET /properties/{property_id}/dashboard/summary` **응답 스펙 신규 확정**(4절).
 >    9/7 확인 결과 이 엔드포인트는 표 한 행만 있고 응답 스펙이 문서 어디에도
@@ -216,7 +223,7 @@
     "cleaning_pending_count": 2,
     "cleaning_issue_count": 0,
 
-    "conflict_count": 1
+    "conflict_count": 1        // 계산 실패 시 null
   },
   "error": null
 }
@@ -244,13 +251,27 @@
 > **15:00 비밀번호 안내 메시지는 이 집계와 무관하다.** 그것은 turnover 여부와
 > 관계없이 도는 별도 알림 스케줄이므로 `today_turnover_count`에 포함하지 않는다.
 
+> ※ **PROPERTY 단위 판매 예약은 `room_id`·`bed_id`가 NULL이다.** SQL에서
+> `NULL = NULL`은 참이 아니므로 일반 등호 비교로는 PROPERTY 단위 숙소의
+> turnover가 집계되지 않는다. 조합 비교에는 **`IS NOT DISTINCT FROM`**을
+> 사용한다. `COALESCE(room_id, 0)` 같은 트릭은 사용하지 않는다(CLAUDE.md
+> 핵심 데이터 모델 원칙에서 이미 폐기 결정됨).
+
 **`conflict_count` 포함 이유와 실패 처리**
 
 iCal을 여러 OTA에서 받는 구조상 더블부킹이 실제로 발생 가능하며, 호스트가
 대시보드에서 **가장 먼저 알아야 할 정보**다(숙소별 캘린더를 일일이 열어보게
-해서는 안 된다). 다만 파생 필드이므로 **계산에 실패하면 이 필드만 생략하고
-나머지 10개는 정상 반환한다(Graceful Degradation)** — CLAUDE.md의 iCal 외부연동
-방어 원칙과 같은 계열로, 일부 실패가 화면 전체를 못 쓰게 만들지 않는다.
+해서는 안 된다). 다만 파생 필드이므로 계산에 실패할 수 있다.
+
+**키는 항상 포함한다. 계산 실패 시 값을 `null`로 반환한다.** 나머지 10개
+필드는 정상 값으로 반환한다(Graceful Degradation) — CLAUDE.md의 iCal
+외부연동 방어 원칙과 같은 계열로, 일부 실패가 화면 전체를 못 쓰게 만들지
+않는다.
+
+> **필드를 생략하지 않는 이유**: 프론트에서 키가 없으면 `undefined`가 되어
+> 조건부 렌더링 방어 코드가 늘어난다. `null`이면 **"계산 못 함"과 "0건"이
+> 구분**되고, 위에 명시한 **11필드 고정 계약도 유지**된다.
+> (v1.8은 "이 필드만 생략"이라고 적어 11필드 고정과 모순이었다 — v1.9 정정)
 
 **포함하지 않는 필드**
 
