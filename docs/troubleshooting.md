@@ -477,6 +477,31 @@ file specified`가 반복됐다. 데몬이 잠깐 응답하는 구간이 있어 
 명시**한다(CLAUDE.md 규칙 0-1의 "실행 결과를 직접 확인한 뒤에만
 완료라고 쓴다"와 같은 취지).
 
+**9/7 해소 — DB 실물검증 13개 항목 전부 통과**: `wsl --shutdown` 후
+Docker Desktop을 재기동하자 데몬이 정상 응답했다(Server 29.5.2).
+**추정했던 WSL2 백엔드 문제가 실제 원인이었음이 확정**됐다.
+컨테이너(`host_on_ai_db`, pgvector/pgvector:pg17)가 healthy로 올라온
+뒤 아래를 전부 실물로 확인했다.
+
+| 항목 | 결과 |
+|---|---|
+| DB 버전 | PostgreSQL **17.11** (Supabase 17.6과 메이저 일치, 17번 대응 확인) |
+| `\dt` | 업무 테이블 **16개** + `alembic_version` = 17개 |
+| `\dx` | **vector 0.8.6**, **btree_gist 1.7** |
+| EXCLUDE | `excl_property_overlap`/`excl_room_overlap`/`excl_bed_overlap` **3종 실재**, `tsrange`+WHERE가 명세서 2.6.1절과 일치 |
+| `confdelsetcols` | `{reservation_id}` — nullable 컬럼만 지정(13번 대응 확정) |
+| 복합 UNIQUE | 명세 3종 + 계층 FK용 6종 = **9종 실재** |
+| ENUM | **15종** — 명세서·모델·실제 DB 3자 일치 |
+| 부분 인덱스 | `uniq_inquiry_latest_response ... WHERE (is_latest = true)` 실재(3번 대응) |
+| 청소 1:1 | `cleaning_tasks_reservation_id_key` UNIQUE 실재 |
+| `alembic current` | `939bc1d14754 (head)` |
+| `alembic check` | **No new upgrade operations detected** (드리프트 없음) |
+| `pytest` | **20 passed**, 실패 0 (5.87초) |
+
+이로써 위 "남은 확인(선행조건)"은 전부 닫혔고, **9/10 iCal 연동의
+선행조건이 충족**됐다. 정적 대조로만 뒷받침되던 상태에서 "실제 DB에도
+그대로 반영돼 있다"가 실물로 확인된 상태로 넘어왔다.
+
 ---
 
 ## 요약
@@ -491,7 +516,7 @@ file specified`가 반복됐다. 데몬이 잠깐 응답하는 구간이 있어 
 | 3. 인프라·프로세스 통제 | 7~8 | 배포 리스크 사전 검토 및 개발 협업 프로세스 리스크 방어 |
 | 3. 인프라·프로세스 통제 | 19 | **9/6 규칙 정합성 점검** — xlsx 검증 면제 조항이 신설 규칙과 충돌해 철회, 검증 기준을 8-2로 일원화 |
 | 3. 인프라·프로세스 통제 | 20 | **9/6 체크리스트 점검** — 포인트/주의 문구가 태스크와 어긋난 사례 발견(전수수정 보류, 착수일 개별 확인) |
-| 3. 인프라·프로세스 통제 | 21 | **9/6~9/7 전수 재검증** — 스키마는 정적 대조로 전부 일치 확인, DB 실물·회귀테스트는 Docker 기동 실패로 미확인(9/10 전 선행조건) |
+| 3. 인프라·프로세스 통제 | 21 | **9/6~9/7 전수 재검증 — 확인·해소 완료** — 정적 대조 전부 일치, Docker(WSL2) 복구 후 DB 실물검증 13항목·pytest 20건 전부 통과 |
 
 **공통점(1~12번)**: 12건 전부가 **실제 코드를 작성하기 전, 설계 문서를
 여러 차례 교차 검증(크로스체크)하는 과정에서 발견되어 사전에
