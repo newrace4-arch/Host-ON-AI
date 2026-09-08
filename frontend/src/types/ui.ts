@@ -68,6 +68,15 @@ export interface PropertyFetchState {
 export type PropertyFetchMap = Record<number, PropertyFetchState>;
 
 /**
+ * 웨이크업 상태 — 대시보드 5상태와 **별개**다.
+ *
+ * `ERROR` 하나로 합치지 않는다: **서버가 안 깨어난 것**과 **대시보드
+ * 데이터를 못 받은 것**은 원인도 복구 방법도 다르다. 전자는 서버를 다시
+ * 깨우면 되고, 후자는 특정 숙소만 재시도하면 된다.
+ */
+export type WakeUpStatus = "connecting" | "connected" | "connection_failed";
+
+/**
  * 대시보드 화면 상태 5가지 — docs/ui_design.md 4-4절.
  *
  * PARTIAL은 기존 4상태에 없는 다섯 번째 상태다. 전체 숙소 통합 대시보드가
