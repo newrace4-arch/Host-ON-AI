@@ -134,6 +134,11 @@ export function useDashboardSummary(): DashboardViewModel {
    *
    * success였으면 refetching(기존 data 유지 — 화면이 깜빡이지 않는다),
    * error였으면 보여줄 data가 없으므로 loading으로 간다.
+   *
+   * TODO(9/9 재시도 버튼 UI 작업 시): error 상태에서 재시도하면
+   * loading으로 전이되며 기존 error 정보가 사라진다. 재시도가 또
+   * 실패했을 때 직전 에러와 새 에러가 같은 원인인지 구분할 근거가
+   * 없어진다. lastError 보존을 검토할 것.
    */
   const refetchProperty = useCallback(
     (propertyId: number) => {

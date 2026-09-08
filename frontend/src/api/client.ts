@@ -4,10 +4,26 @@
  * 근거: CLAUDE.md 코딩규칙 9번(프론트 재시도 패턴, 9/8 보강),
  *       docs/api_contract.md v2.0 0절(공통 응답 봉투)
  *
+ * ⚠️ 【반환 타입 — 호출 전에 반드시 읽을 것】
+ * 응답 인터셉터가 `response.data`를 반환해 **axios 껍데기를 벗긴다.**
+ * 따라서 이 클라이언트의 반환값은 `AxiosResponse`가 아니라 **언래핑된
+ * `Envelope<T>`**(`{ data, meta?, error }`)다. `res.status`·`res.headers`는
+ * 존재하지 않으며, `res.data.data` 같은 이중 접근도 없다.
+ *
+ * **호출 시 두 번째 제네릭(R)을 지정해야 한다.** 지정하지 않으면 타입은
+ * `AxiosResponse<T>`로 추론되어 런타임 값과 어긋난다.
+ *
+ *   client.get<unknown, Envelope<Property[]>>("/properties")
+ *   // 두 번째 제네릭(R)을 지정해야 AxiosResponse 래핑이 대체된다
+ *
+ * 【두 인스턴스의 차이】
+ *   client     — 언래핑 + 401 리다이렉트 + GET 재시도
+ *   authClient — 언래핑만 (401·재시도 없음)
+ *
  * 여기서 결정한 것 세 가지:
  *   1. 자동 재시도는 GET만. POST·PATCH·DELETE는 하지 않는다.
  *   2. axios 껍데기만 벗기고 백엔드 봉투 { data, meta?, error }는 유지한다.
- *   3. 인증 API는 별도 인스턴스를 쓴다(401 인터셉터 미적용).
+ *   3. 인증 API는 별도 인스턴스를 쓴다(401 리다이렉트·재시도 미적용).
  */
 
 import axios, { AxiosError, type AxiosInstance } from "axios";
@@ -83,13 +99,27 @@ function createInstance(): AxiosInstance {
 export const client = createInstance();
 
 /**
- * 인증 API 전용 — **인터셉터를 붙이지 않는다.**
+ * 인증 API 전용 — **401 리다이렉트와 재시도를 붙이지 않는다.**
  *
  * 로그인 실패(자격증명 오류)의 401과 세션 만료의 401은 성격이 다르다.
  * 전자는 "로그인 실패" 메시지만 보여줘야 하는데, 공용 인스턴스를 쓰면
  * 401 인터셉터가 토큰을 지우고 /login으로 보내버린다.
+ * 재시도도 붙이지 않는다 — 로그인은 POST라 애초에 재시도 대상이 아니다.
+ *
+ * **단, 응답 언래핑은 client와 동일하게 적용한다(아래).** 같은 백엔드가
+ * 같은 봉투로 응답하는데 인스턴스마다 접근 방식이 다르면
+ * (`res.data` vs `res.data.data`) 호출부에서 혼동이 생긴다.
  */
 export const authClient = createInstance();
+
+/**
+ * authClient의 유일한 인터셉터 — 언래핑.
+ *
+ * `createInstance()`에 넣지 않는 이유: 거기에 넣으면 401·재시도까지 두
+ * 인스턴스에 공통으로 붙일 수밖에 없는 구조가 되어 분리한 의미가 없어진다.
+ * 인스턴스별로 필요한 것만 바깥에서 붙인다.
+ */
+authClient.interceptors.response.use((response) => response.data);
 
 /* ── 요청 인터셉터: Authorization 헤더 ──────────────────────────── */
 
