@@ -3,7 +3,7 @@
 ## 0. 문서 성격
 
 - **9/7 확정.** 화면 목록과 공통 컴포넌트의 SSOT다.
-- 근거가 되는 API 스펙은 `docs/api_contract.md` **v1.8**.
+- 근거가 되는 API 스펙은 `docs/api_contract.md` **v2.0**.
 - 이 문서는 체크리스트 9/7 태스크 **R33(전체 화면목록 확정)**과
   **R36(디자인시스템 공통 컴포넌트 정의)**의 산출물이다.
 - **와이어프레임(R35)은 이 문서에 포함하지 않는다.** 화면 목록을
@@ -226,7 +226,7 @@ CLAUDE.md 원칙상 가격조정은 **전용 테이블 없이 `ACTION_ITEMS` 카
 - **목적**: 오늘 무엇을 해야 하는지를 전체 숙소 기준으로 한 화면에서 파악
 - **주요 API**: `GET /properties` → 각 숙소 `GET /properties/{id}/dashboard/summary` **병렬 호출 후 합산**
 
-**조회 방식** (api_contract v1.8 4.2절)
+**조회 방식** (api_contract v2.0 4.2절)
 - 백엔드에 **교차 숙소 집계 엔드포인트를 만들지 않는다.**
 - 프론트가 `GET /properties`로 목록을 받은 뒤 각 숙소의 summary를
   병렬 호출해 합산한다.
@@ -290,7 +290,7 @@ CLAUDE.md 원칙상 가격조정은 **전용 테이블 없이 `ACTION_ITEMS` 카
 | `BED` | `room_id` + `bed_id` **필수** |
 
 > `bookable_unit_type`은 `GET /properties` 응답에서 **미리 받아둔다**
-> (숙소 상세 재호출 방지 — api_contract v1.8 2절).
+> (숙소 상세 재호출 방지 — api_contract v2.0 2절).
 
 **모달에 표시할 에러 4종**
 
