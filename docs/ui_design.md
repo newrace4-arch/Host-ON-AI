@@ -606,6 +606,42 @@ CLAUDE.md 원칙상 가격조정은 **전용 테이블 없이 `ACTION_ITEMS` 카
   아니다. `/compliance` 전용 화면을 없앨 수 있었던 것도 같은 이유다
   (2절 참고).
 
+### 6-3. 숙소 스코프 화면 이동 규칙 (9/8 확정)
+
+**숙소 스코프 화면으로 이동할 때는 `usePropertyLink()`를 쓴다.**
+
+`<Link to="/calendar">`처럼 경로를 직접 쓰면 선택된 숙소 쿼리
+(`?property=`)가 빠져 폴백이 동작한다. 사용자는 **방금 보던 숙소가 아닌
+다른 숙소로 돌아가게 된다.** 6-1의 원칙 1(컨텍스트를 함께 전달한다)이
+코드에서 깨지는 지점이다.
+
+| 구분 | 라우트 |
+|---|---|
+| **적용** | `/calendar` `/inquiries` `/actions` `/cleaning` `/settlements` `/knowledge` `/settings` (7개) |
+| **적용 안 함** | `/dashboard`(전체 숙소 통합 뷰라 특정 숙소로 좁히면 존재 이유가 없다), `/login`, `/signup`, `/onboarding`(레이아웃 밖) |
+
+**`Link`와 `navigate()` 양쪽에 같은 규칙이 적용된다.** 훅이 컴포넌트가
+아니라 **경로 문자열을 반환하는 함수**를 주기 때문이다.
+
+```tsx
+const propertyLink = usePropertyLink();   // (to: string) => string
+
+<Link to={propertyLink("/calendar")}>캘린더</Link>
+navigate(propertyLink("/calendar"));
+```
+
+> Link 래퍼 컴포넌트로 만들지 않은 이유가 여기 있다. 래퍼는 `navigate()`
+> 기반 이동(액션센터 카드에서 청소 화면으로 보내는 등)에 쓸 수 없어
+> 규칙이 둘로 갈라진다.
+
+**같은 화면이면 기존 쿼리를 전부 보존하고, 다른 화면이면 `property`만
+넘긴다.** `/actions?status=OPEN&size=20`에서 필터가 날아가면 안 되지만,
+그 `status=OPEN`이 청소 화면까지 따라가면 엉뚱한 필터가 걸린다.
+
+> ※ **컴파일 타임에 강제할 수단이 없다.** ESLint 커스텀 규칙이나 Link
+> 래퍼는 D-32 일정에 넣을 범위가 아니라고 판단했다. **코드 리뷰에서
+> 확인한다.** ESLint 규칙 도입은 P1 후보다.
+
 > ※ **User Flow 다이어그램(화면 간 이동 구조 전체)은 9/9 별도 태스크다.**
 > 이 절은 개별 이동 경로와 컨텍스트 전달 규칙만 다룬다.
 
