@@ -2,7 +2,7 @@
  * 헤더 (2026-09-08)
  *
  * ⚠️ PropertySwitcher는 **오늘 API를 호출하지 않는다.** 자리와 마크업만
- *    만들고 실제 목록 연결은 9/9로 미룬다.
+ *    만들고 실제 목록 연결은 9/11로 미룬다.
  *
  * 이유(9/8 결정): GET /properties가 필요한 곳이 셋이다 — 이 드롭다운,
  * 쿼리 폴백, 대시보드 병렬 호출. 각자 부르면 같은 요청이 중복된다.
@@ -10,7 +10,7 @@
  * 목록을 공유할 깔끔한 방법이 없고, 억지로 Context를 만들면 내일 인증
  * Context와 겹쳐 구조가 꼬인다. 오늘은 훅 안에서만 호출한다.
  *
- * TODO(9/9): 목록 연결 + 폴백 정책 구현
+ * TODO(9/11): 목록 연결 + 폴백 정책 구현
  *   - 쿼리 없음        → 첫 번째 숙소로 치환, URL은 replace(히스토리 보존)
  *   - 존재하지 않는 ID → 안내 후 첫 번째로 폴백
  *   - 숙소 0개         → 자동 선택·폴백을 수행하지 않는다
@@ -34,7 +34,7 @@ export default function Header() {
       {/* PropertySwitcher 자리 — 오늘은 비활성 마크업만 */}
       <div className="flex items-center gap-4">
         <div className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-500">
-          숙소 선택 (9/9 연결 예정)
+          숙소 선택 (9/11 연결 예정)
         </div>
         <span className="text-sm text-gray-500">계정</span>
       </div>

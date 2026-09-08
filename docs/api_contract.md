@@ -10,7 +10,7 @@
 > 2. `POST /properties/{property_id}/checklist-items`는 **필요하다는 것만
 >    확정**하고 요청 스펙은 구현 시점(10/1~07)으로 미뤘다. 미정의 항목으로
 >    10절에 기록.
-> **v2.0→v2.1 변경 (9/9 응답 스펙 미정의 건 해소)**:
+> **v2.0→v2.1 변경 (9/8 응답 스펙 미정의 건 해소)**:
 > 1. `GET /properties/{property_id}/rooms`·`GET /rooms/{room_id}/beds`
 >    **응답 스펙 신규 확정**(2.1·2.2절). 9/13 구현 선행 작업.
 >    `bookable_unit_type`이 `PROPERTY`인 숙소는 **빈 배열이 정상**임을
@@ -216,7 +216,7 @@
 
 ### 2.1 GET /properties/{property_id}/rooms 응답 스펙 (v2.1 신규 확정)
 
-> 9/9 확인 결과 2절 표에 한 행만 있고 응답 스펙이 없었다
+> 9/8 확인 결과 2절 표에 한 행만 있고 응답 스펙이 없었다
 > (troubleshooting 23번). 9/13 객실·침대 관리 구현의 선행 작업으로
 > 확정한다. **필드는 전부 `ROOMS` 실재 컬럼이며 DB 스키마 변경은 없다.**
 
@@ -353,7 +353,7 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 
 ### 3.1 GET /properties/{property_id}/channels 응답 스펙 (v2.1 신규 확정)
 
-> 9/9 확인 결과 3절 표에 한 행만 있고 응답 스펙이 없었다
+> 9/8 확인 결과 3절 표에 한 행만 있고 응답 스펙이 없었다
 > (troubleshooting 23번). 9/10 채널 연동 구현의 선행 작업으로 확정한다.
 > **필드는 전부 `CHANNEL_CONNECTIONS` 실재 컬럼이며 DB 스키마 변경은 없다.**
 

@@ -13,7 +13,7 @@
  * 문제는 `client.get<T>(url)`처럼 **두 번째 제네릭을 빠뜨려도 컴파일
  * 에러가 나지 않는다**는 것이다. 타입은 조용히 `AxiosResponse<T>`로
  * 추론되어 런타임 값과 어긋난 채 통과한다. 주석만으로는 화면이 늘어나는
- * 동안 이 실수를 막을 수 없어 **래퍼를 만들었다(9/9)**.
+ * 동안 이 실수를 막을 수 없어 **래퍼를 만들었다(9/8)**.
  *
  *   ✅ api.get<Property[]>("/properties")        // 이렇게 쓴다
  *   ❌ client.get<Property[]>("/properties")     // 조용히 잘못된 타입
@@ -176,7 +176,7 @@ client.interceptors.response.use(
         clearAccessToken();
         // replace를 쓴다 — href는 하드 리로드라 상태가 초기화되고
         // 히스토리에 만료된 경로가 남는다.
-        // TODO(9/9): 라우터가 붙으면 navigate 기반으로 교체
+        // TODO(9/11): 라우터가 붙으면 navigate 기반으로 교체
         window.location.replace("/login");
       }
       return Promise.reject(error);

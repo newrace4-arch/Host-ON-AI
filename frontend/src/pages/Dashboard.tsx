@@ -235,13 +235,18 @@ export default function Dashboard() {
         <div className="rounded border border-gray-300 p-4 text-sm text-gray-600">
           {t.open_action_count === 0
             ? "처리할 작업이 없습니다 — 모든 숙소가 정상 운영 중"
-            : "액션 목록은 9/9에 연결합니다."}
-          {/* TODO(9/9): fetchActionItems(id, { status: 'OPEN', size: 5 })로
-              숙소별 프리뷰를 붙인다. API 함수는 src/api/actionItems.ts에 있다. */}
+            : "액션 목록은 아직 연결되지 않았습니다."}
+          {/* TODO(액션센터 API 구현 후): fetchActionItems(id, { status: 'OPEN',
+              size: 5 })로 숙소별 프리뷰를 붙인다. API 함수는
+              src/api/actionItems.ts에 있다.
+              ⚠️ 날짜를 적지 않은 이유: 일자별 실행리스트에 이 작업(대시보드
+              액션 프리뷰 연결)에 대응하는 행이 없다. 원래 "9/9"라고 적혀
+              있었으나 9/9는 설계일이라 코드 태스크가 하나도 없다. 확인되지
+              않은 날짜를 다시 적지 않는다. */}
         </div>
       </section>
 
-      {/* TODO(9/9 이후): 지식베이스 등록 유도 배너가 들어갈 자리.
+      {/* TODO(지식베이스 화면 구현 후): 등록 유도 배너가 들어갈 자리.
           knowledge_chunks가 0건일 때만 노출한다. 조건 없이 항상 뜨는
           하드코딩 배너를 넣지 않기로 했다(9/8 결정) — 지식베이스가 채워져도
           "등록해보세요"가 남아 시연 화면에 그대로 나갈 위험이 있다. */}

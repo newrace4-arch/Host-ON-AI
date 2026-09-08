@@ -557,10 +557,10 @@ Docker Desktop을 재기동하자 데몬이 정상 응답했다(Server 29.5.2).
 - `action-items` (9절) — ✅ **해소: v2.0(9/8)**
 - `inquiries` 목록 (7절)
 - `knowledge-chunks` (8절)
-- `channels` (3절) — ✅ **해소: v2.1(9/9)**
-- `rooms` / `beds` (2절) — ✅ **해소: v2.1(9/9)**
+- `channels` (3절) — ✅ **해소: v2.1(9/8)**
+- `rooms` / `beds` (2절) — ✅ **해소: v2.1(9/8)**
 
-> **해소 현황(9/9 기준): 7건 중 3건 해소, 남은 것 4건**
+> **해소 현황(9/8 기준): 7건 중 3건 해소, 남은 것 4건**
 > — `settlements` / `financial-config` / `inquiries` 목록 /
 > `knowledge-chunks`.
 >

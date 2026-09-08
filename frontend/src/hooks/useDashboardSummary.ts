@@ -77,7 +77,7 @@ export function useDashboardSummary(): DashboardViewModel {
    * 재시도 가드(진행 중이면 재요청하지 않음)를 **setFetchMap 업데이터
    * 바깥에서** 판정하기 위해 둔다. 업데이터 안에서 외부 변수를 바꾸면
    * StrictMode가 업데이터를 두 번 호출할 때 두 번째 호출이 이미 갱신된
-   * 상태를 보고 플래그를 뒤집어, 실제 요청이 나가지 않는다(9/9에 실제로
+   * 상태를 보고 플래그를 뒤집어, 실제 요청이 나가지 않는다(9/8에 실제로
    * 겪음). **상태 갱신 함수는 순수하게 유지한다.**
    */
   const fetchMapRef = useRef<PropertyFetchMap>({});
@@ -156,7 +156,7 @@ export function useDashboardSummary(): DashboardViewModel {
    * error였으면 보여줄 data가 없으므로 loading으로 간다.
    *
    * error에서 재시도할 때는 그 에러를 **`lastError`로 옮겨 보관**한다
-   * (9/9 처리). `status`가 loading이 되며 `error`가 지워지는데, 재시도가
+   * (9/8 처리). `status`가 loading이 되며 `error`가 지워지는데, 재시도가
    * 또 실패했을 때 직전 에러와 비교할 근거가 없으면 같은 원인인지 알 수
    * 없기 때문이다. 화면에는 노출하지 않는다.
    *
