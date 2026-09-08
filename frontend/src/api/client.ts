@@ -4,21 +4,32 @@
  * 근거: CLAUDE.md 코딩규칙 9번(프론트 재시도 패턴, 9/8 보강),
  *       docs/api_contract.md v2.0 0절(공통 응답 봉투)
  *
- * ⚠️ 【반환 타입 — 호출 전에 반드시 읽을 것】
+ * ⚠️ 【호출은 `api` / `authApi` 래퍼를 쓴다 — `client.get`을 직접 쓰지 말 것】
  * 응답 인터셉터가 `response.data`를 반환해 **axios 껍데기를 벗긴다.**
- * 따라서 이 클라이언트의 반환값은 `AxiosResponse`가 아니라 **언래핑된
- * `Envelope<T>`**(`{ data, meta?, error }`)다. `res.status`·`res.headers`는
- * 존재하지 않으며, `res.data.data` 같은 이중 접근도 없다.
+ * 따라서 반환값은 `AxiosResponse`가 아니라 **언래핑된 `Envelope<T>`**
+ * (`{ data, meta?, error }`)다. `res.status`·`res.headers`는 존재하지 않고
+ * `res.data.data` 같은 이중 접근도 없다.
  *
- * **호출 시 두 번째 제네릭(R)을 지정해야 한다.** 지정하지 않으면 타입은
- * `AxiosResponse<T>`로 추론되어 런타임 값과 어긋난다.
+ * 문제는 `client.get<T>(url)`처럼 **두 번째 제네릭을 빠뜨려도 컴파일
+ * 에러가 나지 않는다**는 것이다. 타입은 조용히 `AxiosResponse<T>`로
+ * 추론되어 런타임 값과 어긋난 채 통과한다. 주석만으로는 화면이 늘어나는
+ * 동안 이 실수를 막을 수 없어 **래퍼를 만들었다(9/9)**.
  *
- *   client.get<unknown, Envelope<Property[]>>("/properties")
- *   // 두 번째 제네릭(R)을 지정해야 AxiosResponse 래핑이 대체된다
+ *   ✅ api.get<Property[]>("/properties")        // 이렇게 쓴다
+ *   ❌ client.get<Property[]>("/properties")     // 조용히 잘못된 타입
  *
- * 【두 인스턴스의 차이】
- *   client     — 언래핑 + 401 리다이렉트 + GET 재시도
- *   authClient — 언래핑만 (401·재시도 없음)
+ * 【두 인스턴스·래퍼의 차이】
+ *   client / api        — 언래핑 + 401 리다이렉트 + GET 재시도
+ *   authClient / authApi — 언래핑만 (401 리다이렉트·재시도 없음)
+ *
+ * 【authClient의 401 처리 규약】
+ * `authClient`에는 401 인터셉터가 없다. **호출부가 try/catch로 잡아**
+ * `error.response?.status === 401`을 "자격증명 틀림"으로 처리한다.
+ * 리다이렉트하지 않고 화면에 메시지만 표시한다.
+ * (세션 만료 401과 다르다 — 전자는 로그인 실패, 후자는 재로그인 유도이며
+ *  후자는 `client` 인터셉터가 처리한다.)
+ * **`authClient`에 401 리다이렉트 인터셉터를 추가하지 않는다.** 추가하면
+ * 분리 목적이 사라진다.
  *
  * 여기서 결정한 것 세 가지:
  *   1. 자동 재시도는 GET만. POST·PATCH·DELETE는 하지 않는다.
@@ -26,7 +37,13 @@
  *   3. 인증 API는 별도 인스턴스를 쓴다(401 리다이렉트·재시도 미적용).
  */
 
-import axios, { AxiosError, type AxiosInstance } from "axios";
+import axios, {
+  AxiosError,
+  type AxiosInstance,
+  type AxiosRequestConfig,
+} from "axios";
+
+import type { Envelope } from "@/types/api";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -178,3 +195,41 @@ client.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+/* ── 래퍼 — 호출부는 이것만 쓴다 ──────────────────────────────────── */
+
+/**
+ * `client`의 얇은 래퍼.
+ *
+ * 두 번째 제네릭(`R`)을 여기서 한 번만 고정해, 호출부가 빠뜨릴 수 없게
+ * 한다. `api.get<Property[]>(url)`처럼 **응답 payload 타입 하나만** 넘기면
+ * 반환은 `Promise<Envelope<Property[]>>`다.
+ *
+ * `client`를 export에서 없애지는 않았다 — 특수한 경우가 생길 수 있다.
+ * 다만 **기본은 래퍼를 쓴다.**
+ */
+export const api = {
+  get: <T>(url: string, config?: AxiosRequestConfig) =>
+    client.get<unknown, Envelope<T>>(url, config),
+
+  post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    client.post<unknown, Envelope<T>>(url, data, config),
+
+  patch: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    client.patch<unknown, Envelope<T>>(url, data, config),
+
+  delete: <T>(url: string, config?: AxiosRequestConfig) =>
+    client.delete<unknown, Envelope<T>>(url, config),
+};
+
+/**
+ * `authClient`의 래퍼 — 인증 API 전용.
+ *
+ * 로그인·회원가입이 POST뿐이라 `post`만 둔다. 필요해지면 그때 늘린다.
+ * 401은 인터셉터가 처리하지 않으므로 **호출부가 try/catch로 잡는다**
+ * (위 "authClient의 401 처리 규약" 참고).
+ */
+export const authApi = {
+  post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    authClient.post<unknown, Envelope<T>>(url, data, config),
+};

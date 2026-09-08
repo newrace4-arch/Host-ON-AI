@@ -7,10 +7,9 @@
  *   전체 큐  ?status=OPEN&size=20
  */
 
-import { client } from "@/api/client";
+import { api } from "@/api/client";
 import { mockActionItems } from "@/api/mock/data";
 import { mockDelay } from "@/api/mock/scenarios";
-import type { Envelope } from "@/types/api";
 import type { ActionItem, Meta } from "@/types/ui";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
@@ -50,7 +49,7 @@ export async function fetchActionItems(
     };
   }
 
-  const res = await client.get<unknown, Envelope<ActionItem[]>>(
+  const res = await api.get<ActionItem[]>(
     `/properties/${propertyId}/action-items`,
     { params: { status, size } },
   );

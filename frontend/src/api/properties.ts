@@ -4,14 +4,13 @@
  * Mock 분기는 **이 계층에서만** 한다. 훅과 컴포넌트는 Mock의 존재를 모른다.
  */
 
-import { client } from "@/api/client";
+import { api } from "@/api/client";
 import { mockProperties } from "@/api/mock/data";
 import {
   mockDelay,
   shouldFailProperties,
   shouldReturnEmptyProperties,
 } from "@/api/mock/scenarios";
-import type { Envelope } from "@/types/api";
 import type { Property } from "@/types/ui";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
@@ -35,6 +34,6 @@ export async function fetchProperties(): Promise<Property[]> {
     return mockProperties;
   }
 
-  const res = await client.get<unknown, Envelope<Property[]>>("/properties");
+  const res = await api.get<Property[]>("/properties");
   return res.data ?? [];
 }
