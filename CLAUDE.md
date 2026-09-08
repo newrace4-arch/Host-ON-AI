@@ -348,11 +348,38 @@ C:\3rd host AI\
    노출하므로, 프론트 `package.json`에
    `"generate-api": "openapi-typescript http://localhost:8000/openapi.json -o src/types/api.ts"`
    스크립트를 추가해 백엔드 스키마 변경시 TS 타입을 자동 동기화한다.
-   React 컴포넌트는 반드시 `src/types/api.ts`에서만 타입을 import.
+   **타입 파일은 두 개로 나눈다 (9/8 완화).**
+   - `src/types/api.ts` — **서버 API 계약 전용.** openapi-typescript가
+     생성·덮어쓰는 파일이므로 수기로 다른 내용을 넣지 않는다.
+   - `src/types/ui.ts` — **화면 전용 타입**(여러 API를 합성한 결과,
+     로딩·에러·부분실패 같은 UI 상태). API 필드가 필요하면 `api.ts`의
+     타입을 참조·확장하고 **독자적으로 재정의하지 않는다**.
+
+   **컴포넌트는 API 응답·요청 타입을 새로 정의하지 않는다.** 이 원칙은
+   그대로 유지된다.
+   > 완화 이유(9/8 프론트 착수 시 발견): "반드시 `api.ts`에서만 import"를
+   > 문자 그대로 지키면 **UI 전용 타입이 갈 곳이 없다** — 여러 숙소
+   > summary 합산 결과, 화면 상태(LOADING/SUCCESS/EMPTY/ERROR/PARTIAL),
+   > 숙소별 조회 상태를 담는 `Record<number, {...}>`, 모달 열림 여부·폼
+   > 임시 상태 등은 API 응답이 아니라 프론트엔드 개념이다. `api.ts`에
+   > 넣으면 나중에 openapi-typescript가 **덮어쓸 때 함께 삭제된다.**
+   > 세 차례 독립 검토에서 모두 같은 지적이 나왔다.
 9. **프론트 재시도 패턴(Render 콜드스타트 이중 안전장치)**: API
    클라이언트(axios/fetch 래퍼)에 503/타임아웃 발생시 1~2회 자동
    재시도(exponential backoff)를 구현한다. UptimeRobot 서버측
    웨이크업과는 별개로, 혹시 못 깨웠을 때의 클라이언트측 방어선.
+   - **자동 재시도는 GET 계열로 제한한다 (9/8 추가).** `POST`·`PATCH`·
+     `DELETE`는 자동 재시도하지 않는다.
+     > 근거: PATCH가 **서버에서 성공했는데 응답만 타임아웃된 경우**
+     > 재시도가 같은 작업을 두 번 실행한다. 정산 확정
+     > (`POST /settlements/{month}/confirm`)이나 액션 처리
+     > (`PATCH /action-items/{id}/resolve`)에서 발생하면 데이터가
+     > 어긋난다.
+   - **웨이크업의 한계 (9/8 추가)**: 앱 진입 시 `GET /health`로 서버를
+     깨우는 것은 **최초 진입만** 해결한다. 사용자가 앱을 켜둔 채 15분
+     이상 무요청이면 서버가 다시 슬립하므로, 이후 API 호출이 콜드
+     스타트를 만날 수 있다. 따라서 **진입 시 웨이크업과 GET 재시도를
+     둘 다** 둔다.
 10. **Alembic 마이그레이션 원칙**: `models/` 디렉토리의 모델 클래스를
     추가·수정할 때는 반드시 `alembic revision --autogenerate -m
     "설명"`으로 마이그레이션 스크립트를 생성하고, **생성된 파일을
