@@ -28,8 +28,18 @@
 
 | 표기 | 의미 |
 |---|---|
-| 필드명 그대로 | `api_contract.md` v2.0에 **응답 예시가 있는** 확정 필드 |
+| 필드명 그대로 | `api_contract.md` **v2.2**에 **응답 예시가 있는** 확정 필드 |
 | `[DB]` 접두 | **API 응답 스펙이 문서에 없어** DB명세서 v1.3 컬럼명을 적은 것. 응답 필드명은 구현 시 확정 |
+
+> **9/8 재검토**: 이 표기는 9/7에 v1.9 기준으로 붙였다. 이후 v2.0이
+> `action-items`를, v2.1이 `rooms`·`beds`·`channels`를 확정하면서
+> `[DB]`였던 **6곳이 확정 필드로 승격**됐다. 버전 숫자만 올리면 재검토하지
+> 않은 것을 검증했다고 주장하는 셈이라, 18곳을 전수 대조한 뒤 갱신했다.
+>
+> **남은 `[DB]` 12곳**은 `knowledge-chunks`(1) · `inquiries`(2) ·
+> `settlements`(6) · `financial-config`(1) — troubleshooting 23번의
+> 미해소 4건 — 과, 요청 스펙 확정을 9/13으로 미룬 `POST /rooms`(1) ·
+> `POST /beds`(1)다.
 
 ---
 
@@ -93,12 +103,12 @@
 | 숙소 카드 제목 | 〃 | `property_id`, `property_name` |
 | 신호등 | 〃 | `red_now_count`, `yellow_today_count`, `green_auto_count` |
 | 카드 지표 요약 | 〃 | `open_action_count`, `cleaning_pending_count`, `cleaning_issue_count` |
-| 액션 프리뷰 | `GET /properties/{id}/action-items?status=OPEN` | `[DB]` `action_id`, `risk_level`, `category`, `title`, `created_at` |
+| 액션 프리뷰 | `GET /properties/{id}/action-items?status=OPEN` | `action_id`, `risk_level`, `category`, `title`, `created_at` |
 | 지식베이스 배너 조건 | `GET /properties/{id}/knowledge-chunks` | `[DB]` `chunk_id` (0건 여부 판정용) |
 
 > **KPI는 서버가 합산하지 않는다.** `GET /properties`로 목록을 받은 뒤 각
 > 숙소의 `dashboard/summary`를 **병렬 호출하고 프론트가 합산**한다
-> (`api_contract` v2.0 4.2절). 교차 숙소 집계 엔드포인트는 만들지 않는다.
+> (`api_contract` v2.2 4.2절). 교차 숙소 집계 엔드포인트는 만들지 않는다.
 
 ### (4) 상태별 변화
 
@@ -194,9 +204,9 @@
 | 화면 요소 | API | 응답 필드 |
 |---|---|---|
 | 폼 분기 판정 | `GET /properties` | `bookable_unit_type` |
-| 객실 선택 | `GET /properties/{id}/rooms` | `[DB]` `room_id`, `room_name` |
-| 침대 선택 | `GET /rooms/{room_id}/beds` | `[DB]` `bed_id`, `bed_label` |
-| 채널 선택 | `GET /properties/{id}/channels` | `[DB]` `connection_id`, `channel` |
+| 객실 선택 | `GET /properties/{id}/rooms` | `room_id`, `room_name` |
+| 침대 선택 | `GET /rooms/{room_id}/beds` | `bed_id`, `bed_label` |
+| 채널 선택 | `GET /properties/{id}/channels` | `connection_id`, `channel` |
 | 저장 | `POST /reservations` | (요청) `property_id`, `room_id`, `bed_id`, `check_in`, `check_out` |
 | 상세 정보 | `GET /reservations/{id}` | `reservation_id`, `guest_name`, `check_in`, `check_out`, `room_id`, `bed_id` |
 | 상태 뱃지 3종 | 〃 | `reservation_status`, `refund_status`, `financial_status` |
@@ -440,8 +450,8 @@
 | 숙박업 유형 6종 | 〃 | `URBAN_HOMESTAY`, `RURAL_HOMESTAY`, `HANOK`, `HOSTEL`, `LODGING_FACILITY`, `GENERAL_LODGING` |
 | 객실 등록 | `POST /properties/{id}/rooms` | `[DB]` `room_name` |
 | 침대 등록 | `POST /rooms/{room_id}/beds` | `[DB]` `bed_label` |
-| 채널 등록 | `POST /properties/{id}/channels` | `[DB]` `channel`, `external_property_id` |
-| 등록된 채널 목록 | `GET /properties/{id}/channels` | `[DB]` `connection_id`, `channel`, `sync_status`, `last_synced_at` |
+| 채널 등록 | `POST /properties/{id}/channels` | (요청) `channel`, **`ical_url`(필수)**, `external_property_id` |
+| 등록된 채널 목록 | `GET /properties/{id}/channels` | `connection_id`, `channel`, `sync_status`, `last_synced_at`, `ical_url_masked` |
 
 ### (4) 상태별 변화
 
