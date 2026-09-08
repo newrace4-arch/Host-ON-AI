@@ -1,6 +1,22 @@
-# Host ON (AI) — API Contract v2.0 (9/7 action-items 응답 스펙 확정)
+# Host ON (AI) — API Contract v2.1 (9/9 channels·rooms·beds 응답 스펙 확정)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v2.0→v2.1 변경 (9/9 응답 스펙 미정의 건 해소)**:
+> 1. `GET /properties/{property_id}/rooms`·`GET /rooms/{room_id}/beds`
+>    **응답 스펙 신규 확정**(2.1·2.2절). 9/13 구현 선행 작업.
+>    `bookable_unit_type`이 `PROPERTY`인 숙소는 **빈 배열이 정상**임을
+>    명시하고, 침대 목록의 정식 경로가 `/properties/{id}/beds`가 아니라
+>    `/rooms/{room_id}/beds`임을 확인(`BEDS`에 `property_id` 컬럼 없음).
+> 2. `GET`·`POST /properties/{property_id}/channels` **응답·요청 스펙
+>    신규 확정**(3.1·3.2절). 9/10 구현 선행 작업.
+> 3. **`ical_url`을 원문으로 노출하지 않고 마스킹**(`ical_url_masked`).
+>    iCal export URL은 인증 없이 예약 일정 전체를 읽을 수 있는 비밀
+>    URL이라 자격증명에 준해 다룬다.
+> 4. `rooms`·`beds`·`channels` 세 목록 모두 **`meta` 없음**. 0절 규약의
+>    예외이며, 근거는 건수가 아니라 용도(선택지 입력)와 구조적 상한
+>    (`channel_enum` 3값 × `UNIQUE(property_id, channel)`)이다.
+> 5. `400 ICAL_URL_REQUIRED`·`400 INVALID_CHANNEL` 신규 에러 코드.
+>    **DB 스키마 변경 없음** — 세 절의 모든 필드가 기존 컬럼이다.
 > **v1.9→v2.0 변경 (9/8 대시보드 구현 선행 작업)**:
 > 1. **목록 응답 `meta` 규약 신설**(0절). `?page`/`size` 파라미터는 있었으나
 >    응답에 총건수·페이지 정보를 담는 방법이 없었다. `GET /properties`는
@@ -189,6 +205,114 @@
 > 일치 보장"을 명시하고 있어, 같은 지표를 목록 API에도 두면 두 API가 서로
 > 다른 시점의 값을 반환해 그 보장이 깨진다.
 
+### 2.1 GET /properties/{property_id}/rooms 응답 스펙 (v2.1 신규 확정)
+
+> 9/9 확인 결과 2절 표에 한 행만 있고 응답 스펙이 없었다
+> (troubleshooting 23번). 9/13 객실·침대 관리 구현의 선행 작업으로
+> 확정한다. **필드는 전부 `ROOMS` 실재 컬럼이며 DB 스키마 변경은 없다.**
+
+**이 엔드포인트가 의미를 갖는 조건**
+
+`bookable_unit_type`이 **`ROOM` 또는 `BED`인 숙소에서만** 의미가 있다.
+`PROPERTY` 단위 숙소(독채 통대여)는 객실을 나누어 팔지 않으므로
+**`rooms`가 비어 있는 것이 정상 상태**다.
+
+| `bookable_unit_type` | 기대 응답 |
+|---|---|
+| `PROPERTY` | `"data": []` — **정상**이다. 404가 아니다 |
+| `ROOM` | 객실 N건 |
+| `BED` | 객실 N건(각 객실 하위에 침대가 있음) |
+
+> **빈 배열을 에러나 EMPTY 상태로 처리하지 않는다.** PROPERTY 숙소에서
+> 객실이 0건인 것은 데이터가 없는 것이 아니라 **그 숙소에 객실 개념이
+> 없는 것**이다. 등록을 유도하는 EmptyState를 띄우면 안 된다
+> (`docs/ui_design.md` 5절 `EmptyState`는 "데이터 0건 안내"용이다).
+
+**용도**: 캘린더의 **예약 생성 모달이 `room_id` 선택지를 채울 때** 쓴다
+(`docs/ui_design.md` 4-5절). 모달은 `bookable_unit_type`이 `ROOM`이면
+`room_id`를, `BED`면 `room_id`+`bed_id`를 필수로 요구하며, 값이 없거나
+계층이 어긋나면 4절의 400 3종(`INVALID_UNIT_HIERARCHY` /
+`ROOM_ID_REQUIRED` / `BED_ID_REQUIRED`)이 반환된다. 온보딩 위저드
+(`docs/ui_design.md` 4-3절)도 등록 직후 결과 확인에 같은 응답을 쓴다.
+
+```json
+{
+  "data": [
+    { "room_id": 11, "room_name": "101호", "capacity": 4 },
+    { "room_id": 12, "room_name": "102호", "capacity": 2 },
+    { "room_id": 13, "room_name": "201호", "capacity": null }
+  ],
+  "error": null
+}
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `room_id` | `ROOMS.room_id` | 예약 생성 시 `room_id`로 그대로 전달 |
+| `room_name` | `ROOMS.room_name` | 선택지 표시 텍스트. 같은 숙소 안에서 유일(`UNIQUE(property_id, room_name)`) |
+| `capacity` | `ROOMS.capacity` | **nullable 컬럼이므로 `null`이 올 수 있다.** 미입력 상태이며 0명이라는 뜻이 아니다 |
+
+> `property_id`는 **응답에 넣지 않는다** — 경로에 이미 있다.
+> `created_at`도 넣지 않는다 — 선택지를 채우는 것이 이 API의 용도이며
+> 등록 시각을 쓰는 화면이 없다.
+>
+> **`capacity`의 `null`과 `0`을 화면에서 구분한다.** `null`은 "미입력",
+> `0`은 있을 수 없는 값이다(4.1절 `conflict_count`와 같은 취급).
+
+**meta 없음** — 0절 규약상 `meta`는 페이지네이션 파라미터(`page`·`size`)를
+지원하는 컬렉션에만 붙는다. 이 엔드포인트는 **예약 모달 선택지의 입력**
+이므로 항상 전체를 반환해야 한다. 일부만 받으면 존재하는 객실이 선택지에서
+누락되어 예약을 만들 수 없다. `GET /properties`와 **같은 이유의 예외**다.
+
+### 2.2 GET /rooms/{room_id}/beds 응답 스펙 (v2.1 신규 확정)
+
+> **경로 주의**: 침대 목록의 정식 경로는 `/properties/{id}/beds`가 아니라
+> **`/rooms/{room_id}/beds`**다(위 2절 표). `BEDS`에는 `property_id`
+> 컬럼이 없고 `room_id`만 있으므로(DB명세서 2.4절), 숙소 단위로 침대를
+> 직접 조회하는 경로는 존재하지 않는다.
+
+`bookable_unit_type`이 **`BED`인 숙소에서만** 의미가 있다. `ROOM` 단위
+숙소의 객실은 침대를 나누어 팔지 않으므로 빈 배열이 정상이다.
+
+```json
+{
+  "data": [
+    { "bed_id": 101, "bed_label": "A" },
+    { "bed_id": 102, "bed_label": "B" }
+  ],
+  "error": null
+}
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `bed_id` | `BEDS.bed_id` | 예약 생성 시 `bed_id`로 그대로 전달 |
+| `bed_label` | `BEDS.bed_label` | 같은 객실 안에서 유일(`UNIQUE(room_id, bed_label)`) |
+
+> `room_id`·`created_at`은 넣지 않는다(2.1절과 같은 이유).
+> `meta`도 없다(같은 이유).
+
+**소유권 검증**: 이 경로에는 `property_id`가 없다. 0절 규칙에 따라 조회
+쿼리 자체에 소유권 조건을 묶는다.
+
+```sql
+SELECT b.* FROM beds b
+JOIN rooms r ON b.room_id = r.room_id
+JOIN properties p ON r.property_id = p.property_id
+WHERE b.room_id = :room_id AND p.host_id = :current_host_id
+```
+
+> 타인 소유 `room_id`와 존재하지 않는 `room_id`를 **구분하지 않고**
+> 둘 다 `404 RESOURCE_NOT_FOUND`를 반환한다(403 금지 — 0절).
+>
+> ⚠️ **빈 배열과 404를 혼동하지 않는다.** 내 소유 객실인데 침대가 없으면
+> `200 + "data": []`, 남의 객실이거나 없는 객실이면 `404`다.
+
+> **POST 요청 바디(`POST /properties/{id}/rooms`,
+> `POST /rooms/{room_id}/beds`)는 이 절에서 정의하지 않았다.** 9/13 객실·
+> 침대 관리 구현 시 확정한다. 표에 행이 있다는 것이 요청 스펙이 정의됐다는
+> 뜻은 아니다(troubleshooting 23번의 교훈).
+
 ---
 
 ## 3. 채널 연동 (CHANNEL_CONNECTIONS)
@@ -217,6 +341,157 @@
 > `sync_status`가 `FAILED`가 아니면 `last_error_message`는 항상 `null`이다
 > (동기화 성공 시 서버가 NULL로 초기화 — 지난 에러가 화면에 남지 않게).
 > 스택트레이스나 내부 URL은 이 필드에 넣지 않는다(정보노출 방지).
+
+### 3.1 GET /properties/{property_id}/channels 응답 스펙 (v2.1 신규 확정)
+
+> 9/9 확인 결과 3절 표에 한 행만 있고 응답 스펙이 없었다
+> (troubleshooting 23번). 9/10 채널 연동 구현의 선행 작업으로 확정한다.
+> **필드는 전부 `CHANNEL_CONNECTIONS` 실재 컬럼이며 DB 스키마 변경은 없다.**
+
+```json
+{
+  "data": [
+    { "connection_id": 7, "channel": "AIRBNB",
+      "ical_url_masked": "https://www.airbnb.com/calendar/ical/****.ics?s=****7890",
+      "external_property_id": "12345678",
+      "sync_status": "SYNCED",
+      "last_synced_at": "2026-09-09T03:00:00Z",
+      "last_error_message": null,
+      "created_at": "2026-08-31T10:12:00Z" },
+    { "connection_id": 8, "channel": "BOOKING_COM",
+      "ical_url_masked": "https://ical.booking.com/v1/export?t=****cd12",
+      "external_property_id": null,
+      "sync_status": "FAILED",
+      "last_synced_at": "2026-09-09T03:00:00Z",
+      "last_error_message": "iCal URL 응답 없음(timeout 5s)",
+      "created_at": "2026-09-02T09:40:00Z" }
+  ],
+  "error": null
+}
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `connection_id` | `CHANNEL_CONNECTIONS.connection_id` | `DELETE /channels/{id}`·`POST /channels/{id}/sync` 호출 키 |
+| `channel` | `.channel` | `AIRBNB` / `BOOKING_COM` / `NAVER` 3값 |
+| `ical_url_masked` | `.ical_url`의 **마스킹 표현** | 원본을 그대로 내리지 않는다 — 아래 별도 항목 참조 |
+| `external_property_id` | `.external_property_id` | nullable. OTA 측 숙소 식별자 |
+| `sync_status` | `.sync_status` | `SYNCING` / `SYNCED` / `FAILED` / `STALE` 4값 |
+| `last_synced_at` | `.last_synced_at` | **컬럼명은 `last_sync_at`이 아니라 `last_synced_at`이다.** nullable(최초 동기화 전) |
+| `last_error_message` | `.last_error_message` | `sync_status`가 `FAILED`가 아니면 항상 `null`(v1.3 운용 규칙) |
+| `created_at` | `.created_at` | 연동 등록 시각 |
+
+> `property_id`는 응답에 넣지 않는다 — 경로에 이미 있다.
+
+**meta 없음 — 이 엔드포인트는 페이지네이션 대상이 아니다**
+
+0절 규약상 `meta`는 `page`·`size`를 지원하는 컬렉션에만 붙는다. 이
+엔드포인트는 지원하지 않으므로 `meta`도 없다.
+
+> **근거는 "건수가 적어서"가 아니라 구조적 상한이다.** `channel_enum`은
+> 값이 3개(`AIRBNB`/`BOOKING_COM`/`NAVER`)이고 DB에
+> `UNIQUE(property_id, channel)`이 걸려 있어(DB명세서 2.5절, "MVP: 채널당
+> 연결 1개로 제한") **숙소당 행 수의 상한이 3으로 고정**된다. 페이지를
+> 나눌 대상 자체가 생길 수 없다.
+>
+> 또한 `/settings` 채널연동 탭은 3개 채널의 연동 여부를 **한 화면에 모두**
+> 보여주므로(`docs/ui_design.md` 2-12·4-12절), 일부만 받으면 "연동 안 됨"과
+> "이번 페이지에 없음"을 구분할 수 없게 된다. `GET /properties`와 같은
+> 계열의 예외다.
+>
+> 향후 `channel_enum`에 값이 대폭 추가되면 이 문장을 근거로 재검토한다.
+
+**`ical_url`을 원문 그대로 노출하지 않는다 (마스킹)**
+
+`ical_url`은 **인증 없이 접근 가능한 비밀 URL**이다. Airbnb·Booking.com의
+iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 사람은
+누구나 그 숙소의 **예약 일정 전체(체크인·체크아웃 날짜, 예약 건수)를
+읽을 수 있다.** 로그인도 토큰도 필요 없다.
+
+| 판단 근거 | 내용 |
+|---|---|
+| CLAUDE.md 백업규칙 3·7번 | `.env`·API 키·비밀번호는 커밋·노출 금지 — iCal URL은 성격이 같다 |
+| CLAUDE.md 코딩규칙 12번 | 외부로 나가는 텍스트에서 민감정보를 제거한다는 같은 취지 |
+| 이 문서 3절 기존 규칙 | `sync-errors` 응답에 이미 *"스택트레이스나 내부 URL은 이 필드에 넣지 않는다(정보노출 방지)"* — **같은 문서 안의 선례** |
+
+> **소유권 검증을 통과한 호스트 본인 요청인데 왜 가리는가**: 응답은
+> 요청자만 보는 것이 아니라 브라우저 개발자도구·네트워크 로그·스크린샷·
+> 화면공유에 그대로 남는다. **10/12 발표 영상에 실제 iCal URL이 찍히면
+> 회수할 수 없다.** 호스트가 화면에서 확인해야 하는 것은 "어느 채널이
+> 연동돼 있고 동기화가 되고 있는가"이지 URL 문자열 자체가 아니다.
+
+**마스킹 규칙**: 스킴과 호스트명은 그대로 두고, 경로·쿼리의 값은 **마지막
+4자만 남기고 `****`로 대체**한다. 호스트가 "어느 채널의 어떤 연동인지"
+식별하는 데는 충분하고, 값을 복원할 수는 없다.
+
+> **필드명을 `ical_url`이 아니라 `ical_url_masked`로 둔다.** 이름이
+> `ical_url`이면 프론트가 이 값을 실제 URL로 착각해 링크로 걸거나 다시
+> 서버에 보낼 수 있다. 이름에 마스킹 사실을 박아 그 실수를 막는다.
+>
+> **원문 전체를 반환하는 엔드포인트는 만들지 않는다.** URL을 바꿔야 하면
+> `DELETE /channels/{id}` 후 다시 `POST`한다(3절 표에 `PATCH`가 없는 것과
+> 일치). 마스킹된 값을 그대로 다시 `POST`하지 않도록 프론트는 재등록 시
+> 입력란을 **빈 칸으로 시작**한다.
+
+### 3.2 POST /properties/{property_id}/channels 요청·응답 스펙 (v2.1 신규 확정)
+
+**요청**
+
+```json
+{
+  "channel": "AIRBNB",
+  "ical_url": "https://www.airbnb.com/calendar/ical/12345678.ics?s=abc1234567890",
+  "external_property_id": "12345678"
+}
+```
+
+| 필드 | 필수 | 출처 | 비고 |
+|---|---|---|---|
+| `channel` | ✅ | `.channel` | 3값 외에는 `400 INVALID_CHANNEL` |
+| `ical_url` | ✅ | `.ical_url` | 없으면 `400 ICAL_URL_REQUIRED`(v2.1 신규 코드) |
+| `external_property_id` | — | `.external_property_id` | 생략 시 `null` |
+
+> **`ical_url`은 DB에서 nullable인데 요청에서는 필수로 둔다.** 컬럼이
+> nullable인 것은 향후 iCal이 아닌 연동 방식을 대비한 여지이고, 지금
+> 시점에 이 엔드포인트의 용도는 **iCal URL 등록** 하나뿐이다(3절 표).
+> URL 없이 만든 연결은 동기화할 대상이 없어 `SYNCING` 상태로 영원히
+> 남는다. DB 제약을 바꾸지 않고 **API 레이어에서만** 필수로 강제한다.
+
+**응답 (201)**
+
+생성된 연결 1건을 3.1절과 **같은 필드 구성**으로 반환한다(`ical_url`은
+여기서도 마스킹). 등록 직후에는 아직 동기화 전이므로
+`sync_status`는 DB 기본값인 `SYNCING`, `last_synced_at`과
+`last_error_message`는 `null`이다.
+
+```json
+{
+  "data": { "connection_id": 9, "channel": "NAVER",
+            "ical_url_masked": "https://ical.naver.com/export?k=****ef34",
+            "external_property_id": null,
+            "sync_status": "SYNCING",
+            "last_synced_at": null,
+            "last_error_message": null,
+            "created_at": "2026-09-10T11:05:00Z" },
+  "error": null
+}
+```
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `INVALID_CHANNEL` | `channel`이 3값이 아님 |
+| 400 | `ICAL_URL_REQUIRED` | `ical_url` 누락 또는 빈 문자열 |
+| 409 | `CHANNEL_ALREADY_CONNECTED` | 같은 `property_id`+`channel` 중복(위 3절 기존 규칙, `UNIQUE(property_id, channel)`) |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` |
+
+> **URL 유효성을 등록 시점에 검증하지 않는다.** iCal 응답을 확인하려면
+> 외부 네트워크 호출이 필요한데, 코딩규칙 11번이 그 호출에 5초 타임아웃과
+> `try-except`를 요구한다. 등록 요청을 그만큼 붙잡아 두는 대신
+> `SYNCING`으로 저장하고, 실패는 배치 동기화가 `FAILED` +
+> `last_error_message`로 남긴다(v1.3 운용 규칙). 호스트는 채널연동 탭에서
+> 그 결과를 본다.
 
 ---
 

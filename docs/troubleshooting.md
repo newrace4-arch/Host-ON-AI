@@ -537,12 +537,28 @@ Docker Desktop을 재기동하자 데몬이 정상 응답했다(Server 29.5.2).
 적으려 했으나 `api_contract.md`에 응답 스펙(응답 예시·필드 정의)이
 아예 없는 엔드포인트가 7개 발견됐다.
 
-- `settlements` / `financial-config` (5절)
-- `action-items` (9절)
+- `settlements` (5절)
+- `financial-config` (5절)
+- `action-items` (9절) — ✅ **해소: v2.0(9/8)**
 - `inquiries` 목록 (7절)
 - `knowledge-chunks` (8절)
-- `channels` (3절)
-- `rooms` / `beds` (2절)
+- `channels` (3절) — ✅ **해소: v2.1(9/9)**
+- `rooms` / `beds` (2절) — ✅ **해소: v2.1(9/9)**
+
+> **해소 현황(9/9 기준): 7건 중 3건 해소, 남은 것 4건**
+> — `settlements` / `financial-config` / `inquiries` 목록 /
+> `knowledge-chunks`.
+>
+> 위 목록의 7건은 **성격이 전부 같다** — 테이블은 실재하고 API 응답
+> 예시만 없는 누락이다. `financial-config`도 예외가 아니다:
+> `FINANCIAL_CONFIGS`는 DB명세서 2.7절과 마이그레이션에 이미 존재하며
+> (`config_id`·`commission_rate`·`base_nightly_rate` 등 7컬럼),
+> 응답 스펙만 없다. 10/2 정산 구현 착수 전에 확정한다.
+>
+> **테이블 자체가 없는 것은 이 목록에 없다.** 그런 항목은 `/checkin`
+> (비대면 체크인)이며, api_contract 엔드포인트 0개·DB 도메인 부재로
+> 9/29~30에 데이터 설계부터 시작한다(`docs/ui_design.md` 3절).
+> 두 가지는 필요한 작업이 다르므로 섞지 않는다.
 
 같은 날 오전에 `dashboard/summary`와 `GET /properties` 두 건의
 응답 스펙을 확정(v1.8)했는데, 같은 성격의 누락이 7건 더 남아
