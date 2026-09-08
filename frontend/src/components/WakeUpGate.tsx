@@ -24,6 +24,14 @@ import type { WakeUpStatus } from "@/types/ui";
  * - **Mock 모드**: 서버를 아예 부르지 않으므로 깨울 대상이 없다.
  *
  * 두 경우 모두 즉시 통과시킨다.
+ *
+ * ⚠️ **`VITE_USE_MOCK`을 api/ 밖에서 읽지만 계층 경계 위반이 아니다**
+ *    (9/8 판정). 원칙이 막으려는 것은 "컴포넌트가 가짜 데이터의 모양이나
+ *    실패 시나리오를 아는 것"인데, 여기서는 가짜 응답을 만들지도
+ *    시나리오를 분기하지도 않는다. `import.meta.env.DEV`와 묶여
+ *    **"서버를 부를 일이 있는 실행 환경인가"**를 판정할 뿐이다. 게이트는
+ *    라우터 앞단의 관문이라 대응하는 API 함수 자체가 없다. 현 위치를
+ *    유지한다.
  */
 const SKIP_WAKEUP =
   import.meta.env.DEV || import.meta.env.VITE_USE_MOCK === "true";

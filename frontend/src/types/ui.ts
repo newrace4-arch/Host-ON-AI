@@ -68,6 +68,38 @@ export interface PropertyFetchState {
 export type PropertyFetchMap = Record<number, PropertyFetchState>;
 
 /**
+ * 숙소 목록 조회 상태 — `GET /properties` 하나에 대한 것이다.
+ *
+ * 대시보드 5상태(`DashboardStatus`)와 **합치지 않는다.** 이쪽은 "전환기에
+ * 띄울 목록이 있는가"이고, 저쪽은 "숙소별 summary 병렬 호출이 어디까지
+ * 성공했는가"다. PARTIAL이 여기엔 존재할 수 없다 — 호출이 하나뿐이다.
+ */
+export type PropertyListStatus = "loading" | "success" | "empty" | "error";
+
+export interface PropertyListState {
+  status: PropertyListStatus;
+  /** loading·error·empty에서는 빈 배열이다 */
+  properties: Property[];
+  error?: unknown;
+}
+
+/** 상태 + 재조회 액션. `usePropertyList()`의 반환 타입이다. */
+export interface PropertyListResult extends PropertyListState {
+  /** 실패 후 [다시 시도]용. 성공 상태에서 불러도 무해하다. */
+  reload: () => void;
+}
+
+/**
+ * AppLayout이 `Outlet context`로 하위 화면에 내려주는 것.
+ *
+ * 숙소 스코프 화면 7개(/calendar·/inquiries·/actions·/cleaning·
+ * /settlements·/knowledge·/settings)가 목록을 다시 부르지 않고 쓰게 한다.
+ */
+export interface AppOutletContext {
+  propertyList: PropertyListResult;
+}
+
+/**
  * 웨이크업 상태 — 대시보드 5상태와 **별개**다.
  *
  * `ERROR` 하나로 합치지 않는다: **서버가 안 깨어난 것**과 **대시보드

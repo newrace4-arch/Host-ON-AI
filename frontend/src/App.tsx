@@ -30,19 +30,23 @@ export default function App() {
         <Route path="/signup" element={<Placeholder name="회원가입" />} />
         <Route path="/onboarding" element={<Placeholder name="온보딩" />} />
 
-        {/* 레이아웃 안 — 운영 화면 9개 */}
+        {/* 레이아웃 안 — 운영 화면 9개.
+            `scoped`는 ?property= 컨텍스트가 필요한 화면 7개를 뜻한다.
+            **라우트는 숙소 유무와 무관하게 항상 등록한다** — 조건부로
+            등록하면 URL 직접 입력·새로고침에서 404가 뜨고 원인을 알 수
+            없다. 목록이 없을 때의 안내는 PropertyScopeGate가 맡는다. */}
         <Route element={<AppLayout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           {/* TODO(9/11~): Placeholder → 실제 컴포넌트로 교체 */}
-          <Route path="/calendar" element={<Placeholder name="캘린더" />} />
-          <Route path="/inquiries" element={<Placeholder name="AI 인박스" />} />
-          <Route path="/actions" element={<Placeholder name="액션센터" />} />
-          <Route path="/cleaning" element={<Placeholder name="청소 관리" />} />
-          <Route path="/settlements" element={<Placeholder name="정산 리포트" />} />
+          <Route path="/calendar" element={<Placeholder name="캘린더" scoped />} />
+          <Route path="/inquiries" element={<Placeholder name="AI 인박스" scoped />} />
+          <Route path="/actions" element={<Placeholder name="액션센터" scoped />} />
+          <Route path="/cleaning" element={<Placeholder name="청소 관리" scoped />} />
+          <Route path="/settlements" element={<Placeholder name="정산 리포트" scoped />} />
           <Route path="/compliance" element={<Placeholder name="인허가 체크리스트" />} />
-          <Route path="/knowledge" element={<Placeholder name="지식베이스" />} />
-          <Route path="/settings" element={<Placeholder name="설정" />} />
+          <Route path="/knowledge" element={<Placeholder name="지식베이스" scoped />} />
+          <Route path="/settings" element={<Placeholder name="설정" scoped />} />
         </Route>
       </Routes>
     </WakeUpGate>
