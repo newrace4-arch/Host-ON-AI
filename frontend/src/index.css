@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* 데스크톱 1280px 기준 (ui_design.md 1-2절 원칙 5 — 토큰은 확정하지 않고
+   기본값을 쓴다. 색·여백·타이포는 프론트 구현이 진행되며 정한다). */
+html,
+body,
+#root {
+  min-width: 1280px;
+  height: 100%;
+}
