@@ -3,7 +3,10 @@
 ## 0. 문서 성격
 
 - **9/7 확정.** 화면 목록과 공통 컴포넌트의 SSOT다.
-- 근거가 되는 API 스펙은 `docs/api_contract.md` **v2.0**.
+- 근거가 되는 API 스펙은 `docs/api_contract.md` **v2.2**.
+- **9/8 개정**: `/compliance` 전용 화면을 `/settings` 4번째 탭으로
+  흡수했다(라우트 12개 → **11개**, 사이드바 메뉴 9개 → **8개**).
+  기능·데이터·API는 그대로이며 조회 위치만 바뀌었다.
 - 이 문서는 체크리스트 9/7 태스크 **R33(전체 화면목록 확정)**과
   **R36(디자인시스템 공통 컴포넌트 정의)**의 산출물이다.
 - **와이어프레임(R35)은 이 문서에 포함하지 않는다.** 화면 목록을
@@ -66,10 +69,10 @@
 대시보드는 요약 + 상위 프리뷰, /actions는 전체 큐와 처리 이력.
 
 **3. 사이드바에 계층을 만들지 않는다**
-근거: 사이드바 메뉴(운영 화면 9개)는 한 화면에 들어간다. 모드·그룹으로
+근거: 사이드바 메뉴(운영 화면 8개)는 한 화면에 들어간다. 모드·그룹으로
 묶으면 클릭이 늘고 위치를 외워야 한다.
 ※ 이 원칙은 사이드바 네비게이션에 적용되며, 화면 내부의 탭
-  구조(예: /settings 3탭)는 대상이 아니다.
+  구조(예: /settings 4탭)는 대상이 아니다.
 
 **4. 위젯 구성은 고정**
 근거: 커스터마이즈는 설정 화면과 저장 구조를 추가로 요구한다.
@@ -89,6 +92,10 @@
 - 고급 분석·커스텀 리포트
 - 팀원 배정·권한 관리
 - 오너 포털
+
+**화면을 추가하기 전에 기존 화면이 그 일을 이미 하는지 확인한다.**
+액션센터가 알림 발생부터 처리까지 완결하는 도메인은 전용 화면이
+필요하지 않을 수 있다. (9/8 `/compliance` 사례 — 아래 4-11절)
 
 ### 1-4. 캘린더 표시 방식
 
@@ -110,7 +117,7 @@ PROPERTY 단위 숙소는 한 줄, ROOM/BED 단위 숙소는 접기/펼치기로
 
 ---
 
-## 2. 라우트 12개
+## 2. 라우트 11개
 
 | # | 라우트 | 화면명 | 주요 API | 비고 |
 |---|---|---|---|---|
@@ -123,9 +130,26 @@ PROPERTY 단위 숙소는 한 줄, ROOM/BED 단위 숙소는 접기/펼치기로
 | 7 | `/actions` | 액션센터 | `GET /properties/{id}/action-items?status=OPEN`, `PATCH /action-items/{id}/resolve`, `GET /properties/{id}/price-recommendations`, `POST /properties/{id}/price-recommendations/apply` | 가격 추천 승인 포함 |
 | 8 | `/cleaning` | 청소 관리 | `GET /properties/{id}/cleaning-tasks`, `PATCH /cleaning-tasks/{id}/status`, `POST /cleaning-tasks/{id}/photo` | |
 | 9 | `/settlements` | 정산 리포트 | `GET /properties/{id}/settlements`, `POST /properties/{id}/settlements/{month}/confirm`, `GET·PATCH /properties/{id}/financial-config` | 스냅샷 정산 |
-| 10 | `/compliance` | 인허가 체크리스트 | `GET /properties/{id}/checklist-items`, `PATCH /checklist-items/{id}` | |
-| 11 | `/knowledge` | RAG 지식베이스 | `GET·POST /properties/{id}/knowledge-chunks`, `DELETE /knowledge-chunks/{id}` | |
-| 12 | `/settings` | 설정 (3탭) | `GET·PATCH /properties/{id}`, 채널 5종 | 아래 상세 |
+| 10 | `/knowledge` | RAG 지식베이스 | `GET·POST /properties/{id}/knowledge-chunks`, `DELETE /knowledge-chunks/{id}` | |
+| 11 | `/settings` | 설정 (4탭) | `GET·PATCH /properties/{id}`, 채널 5종, `GET /properties/{id}/checklist-items`, `PATCH /checklist-items/{id}` | 아래 상세 |
+
+> **`/compliance`(인허가 체크리스트)는 전용 라우트를 두지 않는다 —
+> `/settings` 4번째 탭으로 흡수했다(9/8, 세 차례 독립 검토 일치).**
+> **기능이 줄어든 것이 아니라 위치만 바뀐 것**이므로 3절 "제외한
+> 화면"에 넣지 않는다. 데이터·API·만료 알림은 전부 그대로 남고,
+> 상세는 아래 **4-11절 탭 4**에 있다.
+>
+> 근거 3가지:
+> 1. **액션센터 안에서 이미 완결된다.** 만료 30일 전 배치가
+>    `ACTION_ITEMS` 카드를 발행하고, 처리도 `PATCH
+>    /checklist-items/{id}`로 카드에서 끝난다. 전용 화면이 추가로
+>    하는 일은 **전체 목록 조회 하나뿐**이다.
+> 2. **범위 대비 과하다.** CLAUDE.md는 컴플라이언스를 *"정적
+>    체크리스트 템플릿 + 만료알림 수준"*으로 이미 제한한다. 그
+>    범위에 사이드바 한 자리를 쓰는 것은 비용이 맞지 않는다.
+> 3. **생성 경로 문제가 함께 풀린다.** `CHECKLIST_ITEMS`를 누가
+>    만드는지가 미정이었는데(troubleshooting 22번), 설정 화면에서
+>    호스트가 직접 추가하는 것은 어색하지 않다.
 
 ### 2-3. `/onboarding` — 단일 URL, 2스텝 위저드
 
@@ -140,13 +164,14 @@ PROPERTY 단위 숙소는 한 줄, ROOM/BED 단위 숙소는 접기/펼치기로
 > 근거: 게스트 문의를 받아보고 채우는 정보이며, 온보딩에서 긴 텍스트
 > 입력을 강제하면 이탈 지점이 된다.
 
-### 2-12. `/settings` — 3탭
+### 2-11. `/settings` — 4탭
 
 | 탭 | 내용 | API |
 |---|---|---|
 | 탭 1 | 숙소정보 | `GET·PATCH /properties/{id}` |
 | 탭 2 | 가격정책 | `PATCH /properties/{id}` — `base_price`, `lower_bound_price`, `weekday_adjustment_enabled`, `holiday_adjustment_enabled` |
 | 탭 3 | 채널연동 | `GET·POST /properties/{id}/channels`, `DELETE /channels/{id}`, `POST /channels/{id}/sync`, `GET /channels/{id}/sync-errors` |
+| 탭 4 | 인허가 | `GET /properties/{id}/checklist-items`, `PATCH /checklist-items/{id}` (9/8 흡수) |
 
 **가격정책 탭이 필요한 근거**: api_contract 13절이 가격 추천 apply 시
 하한가 위반을 `400 BELOW_LOWER_BOUND`로 거부하며 *"호스트가 하한가를
@@ -370,44 +395,7 @@ CLAUDE.md 원칙상 가격조정은 **전용 테이블 없이 `ACTION_ITEMS` 카
 > 금액이 추정치인지 확정인지 `financial_status`(ESTIMATED/CONFIRMED/
 > MANUALLY_ADJUSTED)로 **반드시 구분 표시**한다.
 
-### 4-10. `/compliance`
-
-- **목적**: 인허가 서류 만료 관리
-- **주요 API**: `GET /properties/{id}/checklist-items`, `PATCH /checklist-items/{id}`
-- **화면 요소**: 만료 임박순 목록 / 완료·갱신 처리
-
-| 상태 | 표시 |
-|---|---|
-| LOADING | 목록 스켈레톤 |
-| SUCCESS | 만료 임박순 정렬 |
-| EMPTY | **미정** — 아래 참고 |
-| ERROR | 갱신 실패 시 토스트 |
-
-> 화면에 **"참고용, 실제 인허가는 관할 지자체 확인 필요"** 문구를 유지한다
-> (CLAUDE.md 원칙).
-
-**EMPTY 상태: 미정 (2026-10-01~07 컴플라이언스 구현 시 확정)**
-
-`CHECKLIST_ITEMS`의 생성 시점이 문서에 정의돼 있지 않아 빈 상태 설계를
-확정할 수 없다(9/7 확인).
-
-- `CHECKLIST_ITEMS.accommodation_type`이 `NOT NULL`로 존재하고, 명세서 8절이
-  "이 항목이 파생된 템플릿 유형"이라고 설명하므로 **템플릿 파생 개념은
-  존재한다**
-- 그러나 그 파생이 **언제·무엇에 의해** 일어나는지(숙소 등록 시 자동 생성 /
-  배치 / 호스트 수동 추가)는 어디에도 없다
-- **생성 엔드포인트(POST)도 없다.** api_contract 10절에는 `GET`과 `PATCH`
-  둘뿐이다
-
-| 생성 방식 | EMPTY 설계 |
-|---|---|
-| 자동 생성 | 생성 실패·지연 안내 |
-| 수동 생성 | `+ 항목 추가` CTA + 숙박업 유형별 필요 서류 안내 |
-
-둘 중 어느 쪽인지는 **컴플라이언스 구현 시 API 설계와 함께 정한다.
-UI가 먼저 정해질 사안이 아니다.**
-
-### 4-11. `/knowledge` ⭐
+### 4-10. `/knowledge` ⭐
 
 - **목적**: 숙소별 하우스룰·FAQ를 등록해 AI 응대의 근거를 만든다
 - **주요 API**: `GET·POST /properties/{id}/knowledge-chunks`, `DELETE /knowledge-chunks/{id}`
@@ -430,18 +418,55 @@ UI가 먼저 정해질 사안이 아니다.**
 | EMPTY | "등록된 지식이 없습니다. AI가 답변할 근거가 없으면 응대 품질이 떨어집니다" + **`+ 첫 항목 추가` CTA를 이 화면에 직접 배치한다.** 대시보드 배너에만 의존하지 않는다 — 배너를 닫은 뒤 재진입하는 경우를 대비 |
 | ERROR | 등록 실패 시 입력값을 유지한 채 토스트 |
 
-### 4-12. `/settings`
+### 4-11. `/settings`
 
-- **목적**: 숙소 정보·가격 정책·채널 연동을 한곳에서 관리
-- **주요 API**: 위 **2-12** 표 참고
-- **화면 요소**: 3탭 / 각 탭 폼 / 채널 동기화 상태·수동 동기화 버튼
+- **목적**: 숙소 정보·가격 정책·채널 연동·인허가를 한곳에서 관리
+- **주요 API**: 위 **2-11** 표 참고
+- **화면 요소**: 4탭 / 각 탭 폼 / 채널 동기화 상태·수동 동기화 버튼 /
+  인허가 항목 목록
 
 | 상태 | 표시 |
 |---|---|
 | LOADING | 폼 스켈레톤 |
 | SUCCESS | 저장 시 토스트 |
-| EMPTY | 채널연동 탭에 연결된 채널 0건이면 "연동된 채널이 없습니다" + iCal URL 등록 유도 |
+| EMPTY | 탭마다 다르다 — 채널연동 탭 0건이면 "연동된 채널이 없습니다" + iCal URL 등록 유도 / 인허가 탭 0건이면 아래 탭 4 참고 |
 | ERROR | `sync_status=FAILED`인 채널은 `GET /channels/{id}/sync-errors`로 사유를 조회해 표시 |
+
+#### 탭 4 — 인허가 (9/8 `/compliance`에서 흡수)
+
+- **목적**: 인허가 서류 만료 관리
+- **API**: `GET /properties/{id}/checklist-items`,
+  `PATCH /checklist-items/{id}`
+- **화면 요소**: **만료 임박순** 목록 / 완료 체크 / 갱신 처리
+  — 전용 화면이던 때와 동일하게 유지한다
+
+> 화면에 **"참고용, 실제 인허가는 관할 지자체 확인 필요"** 문구를
+> 유지한다(CLAUDE.md 원칙 — 정교한 법률 판단 로직을 만들지 않는다).
+
+**EMPTY 상태: 확정 (9/8) — `+ 항목 추가` CTA**
+
+0건이면 **`+ 항목 추가` CTA**와 숙박업 유형별 필요 서류 안내를
+보여준다.
+
+> **미정이었던 것이 탭으로 옮기면서 해소됐다.** 9/7 시점에는
+> `CHECKLIST_ITEMS`를 **누가 만드는지**가 문서 어디에도 없어
+> (자동 생성 / 배치 / 수동 중 무엇인지 불명) 빈 상태를 확정할 수
+> 없었다(troubleshooting 22번). 전용 조회 화면에서는 호스트가 직접
+> 항목을 만드는 동선이 어색했지만, **설정 화면에서 호스트가 직접
+> 추가하는 것은 자연스럽다.** 수동 생성으로 확정한다.
+>
+> `CHECKLIST_ITEMS.accommodation_type`(`NOT NULL`)은 **숙소의 유형을
+> 그대로 넣는다** — 명세서 8절의 "파생된 템플릿 유형"이란 표현은
+> 유지되며, 유형별 서류 안내가 그 템플릿 역할을 한다.
+>
+> **`POST` 엔드포인트의 요청 스펙은 아직 정의하지 않았다.**
+> 컴플라이언스 구현 시점(10/1~07)에 확정한다
+> (`docs/api_contract.md` 10절).
+
+**이 탭이 액션센터를 대체하지 않는다.** 만료 30일 전 배치가 발행하는
+`ACTION_ITEMS` 카드는 그대로이며, 호스트가 실제로 처리하는 곳은
+여전히 `/actions`다. 이 탭은 **전체 목록을 훑고 항목을 추가·정리하는
+곳**이다(원칙 2 — 조회와 처리를 분리).
 
 ---
 
@@ -450,7 +475,7 @@ UI가 먼저 정해질 사안이 아니다.**
 | # | 컴포넌트 | 용도 / 사용처 |
 |---|---|---|
 | 1 | `Header` | 상단 고정. 로고, `PropertySwitcher`, 계정 메뉴 — 전 화면 |
-| 2 | `Sidebar` | 좌측 네비게이션. **운영 화면 9개** 이동(아래 5-2 참고) — AppLayout 안의 전 화면 |
+| 2 | `Sidebar` | 좌측 네비게이션. **운영 화면 8개** 이동(아래 5-2 참고) — AppLayout 안의 전 화면 |
 | 3 | `PropertySwitcher` | 숙소 컨텍스트 전환 (아래 상세) |
 | 4 | `Card` | 지표·항목 묶음 표시 — 대시보드 숙소 카드, 액션 카드, 청소 작업 카드 |
 | 5 | `Badge` | 상태·우선순위 표시 — 예약 상태 3종, 청소 상태 6종, 우선순위 3색, 숙소 유형 |
@@ -459,14 +484,18 @@ UI가 먼저 정해질 사안이 아니다.**
 | 8 | `Loading` | 조회 중 표시 — 스켈레톤(목록·표) / 스피너(버튼·부분 갱신) |
 | 9 | `EmptyState` | 데이터 0건 안내 (아래 상세) |
 
-### 5-2. `Sidebar` (상세) — 메뉴는 9개다
+### 5-2. `Sidebar` (상세) — 메뉴는 8개다
 
-`Sidebar`는 AppLayout 안의 **운영 화면 9개**를 평면 배치한다.
+`Sidebar`는 AppLayout 안의 **운영 화면 8개**를 평면 배치한다.
 `/login`·`/signup`·`/onboarding`은 AppLayout 밖이므로 사이드바에
 나타나지 않는다. `/onboarding` 진입은 `PropertySwitcher` 드롭다운 하단
 **`+ 새 숙소 등록`**이 담당한다.
 
-> **라우트 12개 ≠ 사이드바 메뉴 12개.**
+> **라우트 11개 ≠ 사이드바 메뉴 11개.**
+>
+> **9개에서 8개로 줄어든 이유**: `/compliance`가 `/settings` 4번째
+> 탭으로 흡수되어 독립 메뉴가 아니게 됐다(9/8, 2절 참고). 인허가
+> 기능은 그대로 있고 사이드바 자리만 반납한 것이다.
 
 **라벨 축약**: 사이드바 폭에 맞춰 두 개를 줄여 표기한다 — `청소 관리`→
 `청소`, `정산 리포트`→`정산`. **라우트 경로는 2절 표와 동일하고 사이드바
@@ -532,9 +561,8 @@ UI가 먼저 정해질 사안이 아니다.**
 | `/actions` | 없음 — 정상 상태 문구만 |
 | `/cleaning` | 예약이 없어 청소가 생성되지 않았음을 안내 |
 | `/settlements` | 없음 — 정산할 예약 없음 안내 |
-| `/compliance` | 체크리스트 항목 등록 |
 | `/knowledge` | 첫 지식 등록 |
-| `/settings` | 채널 연동 등록 |
+| `/settings` | 탭별로 다름 — 채널연동 탭: 채널 연동 등록 / 인허가 탭: `+ 항목 추가`(4-11절 탭 4) |
 
 ---
 
@@ -557,7 +585,7 @@ UI가 먼저 정해질 사안이 아니다.**
 | `/dashboard` 숙소별 신호등 카드 | 해당 개별 화면 | **`PropertySwitcher`가 그 숙소로 자동 전환된 상태로 열린다** |
 | `/dashboard` 액션 프리뷰 `전체 보기 →` | `/actions` | — |
 | `/actions` 청소 지연 카드 | `/cleaning` | 해당 작업에 **포커스** |
-| `/actions` 서류 만료 카드 | `/compliance` | 해당 항목에 **포커스** |
+| `/actions` 서류 만료 카드 | `/settings` 인허가 탭 | 해당 항목에 **포커스**. 단 **이동이 필수는 아니다** — 아래 근거 참고 |
 | `/actions` 가격 추천 카드 | — | **카드 내에서 즉시 승인. 화면 이동 없음** |
 | `/calendar` 예약 상세 모달 | `/cleaning` | 그 예약에 대응하는 청소 작업으로 이동 |
 | `PropertySwitcher` 드롭다운 하단 | `/onboarding` | `+ 새 숙소 등록` |
@@ -572,6 +600,11 @@ UI가 먼저 정해질 사안이 아니다.**
 - **`+ 새 숙소 등록`을 `PropertySwitcher`에 두는 이유**: 온보딩은 가입 직후
   1회 경로라, 이미 숙소가 있는 호스트가 **두 번째 숙소를 추가할 진입점이
   없다.** 숙소를 고르려고 연 드롭다운에 두는 것이 가장 자연스럽다.
+- **서류 만료 → 설정 인허가 탭 이동이 필수가 아닌 이유**: 갱신 처리
+  (`PATCH /checklist-items/{id}`)는 **액션센터 카드 안에서 바로 끝난다.**
+  이동은 "다른 서류도 함께 보고 싶을 때"의 선택지이지 처리 경로가
+  아니다. `/compliance` 전용 화면을 없앨 수 있었던 것도 같은 이유다
+  (2절 참고).
 
 > ※ **User Flow 다이어그램(화면 간 이동 구조 전체)은 9/9 별도 태스크다.**
 > 이 절은 개별 이동 경로와 컨텍스트 전달 규칙만 다룬다.

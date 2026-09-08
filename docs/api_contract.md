@@ -1,6 +1,15 @@
-# Host ON (AI) — API Contract v2.1 (9/9 channels·rooms·beds 응답 스펙 확정)
+# Host ON (AI) — API Contract v2.2 (9/8 컴플라이언스 호출 위치 정정)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> **v2.1→v2.2 변경 (9/8 컴플라이언스 화면 배치 변경)**:
+> 1. 10절에 **호출 위치 명시** — `/settings` 인허가 탭과 액션센터 카드
+>    양쪽에서 호출된다. `/compliance` 전용 화면을 `/settings` 4번째
+>    탭으로 흡수했다(`docs/ui_design.md` 2절, 라우트 12→11).
+>    **엔드포인트·요청·응답은 하나도 바뀌지 않았다.** 화면 배치만 바뀐
+>    것이므로 기능 축소가 아니다.
+> 2. `POST /properties/{property_id}/checklist-items`는 **필요하다는 것만
+>    확정**하고 요청 스펙은 구현 시점(10/1~07)으로 미뤘다. 미정의 항목으로
+>    10절에 기록.
 > **v2.0→v2.1 변경 (9/9 응답 스펙 미정의 건 해소)**:
 > 1. `GET /properties/{property_id}/rooms`·`GET /rooms/{room_id}/beds`
 >    **응답 스펙 신규 확정**(2.1·2.2절). 9/13 구현 선행 작업.
@@ -395,7 +404,7 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 > 나눌 대상 자체가 생길 수 없다.
 >
 > 또한 `/settings` 채널연동 탭은 3개 채널의 연동 여부를 **한 화면에 모두**
-> 보여주므로(`docs/ui_design.md` 2-12·4-12절), 일부만 받으면 "연동 안 됨"과
+> 보여주므로(`docs/ui_design.md` 2-11·4-11절), 일부만 받으면 "연동 안 됨"과
 > "이번 페이지에 없음"을 구분할 수 없게 된다. `GET /properties`와 같은
 > 계열의 예외다.
 >
@@ -1052,6 +1061,21 @@ ORDER BY risk_level ASC, created_at DESC
 |---|---|---|
 | GET | `/properties/{property_id}/checklist-items` | 체크리스트 목록(만료 임박순 정렬) |
 | PATCH | `/checklist-items/{item_id}` | 완료/갱신 처리 |
+
+> **호출 위치는 두 곳이다 (v2.2)**: `/settings` **인허가 탭**(전체 목록
+> 조회·항목 추가·정리)과 **액션센터의 서류 만료 카드**(실제 갱신 처리).
+> `/compliance` 전용 화면은 두지 않는다 — 9/8에 `/settings` 4번째 탭으로
+> 흡수했다(`docs/ui_design.md` 2절·4-11절). **엔드포인트는 그대로다.**
+>
+> 만료 30일 전 배치가 발행하는 `ACTION_ITEMS` 카드에서 `PATCH`가 그대로
+> 호출되므로, 호스트는 화면을 옮기지 않고도 갱신을 끝낼 수 있다.
+
+> **`POST` 요청 스펙은 아직 정의하지 않았다.** 호스트가 인허가 항목을
+> **직접 추가할 수 있어야 한다**는 것은 9/8에 확정됐다(설정 탭으로
+> 옮기면서 생성 경로가 수동으로 정해짐 — troubleshooting 22번). 그러나
+> 요청 바디·검증 규칙은 **컴플라이언스 구현 시점(10/1~07)에 확정**한다.
+> 2.2절의 `rooms`·`beds` `POST`와 같은 취급이다 — 표에 행이 있다는 것이
+> 요청 스펙이 정의됐다는 뜻은 아니다(troubleshooting 23번의 교훈).
 
 ---
 
