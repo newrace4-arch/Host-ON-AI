@@ -65,28 +65,61 @@ function SignalRow({ summary }: { summary: DashboardSummary }) {
   );
 }
 
+/**
+ * 재시도 버튼 — 실패한 숙소 카드에만 나타난다.
+ *
+ * **전체 재시도 버튼은 만들지 않는다.** 성공한 숙소를 다시 부를 이유가
+ * 없고, 훅의 `refetchProperty(id)`도 지정한 숙소만 재호출한다.
+ */
+function RetryButton({
+  onRetry,
+  disabled,
+}: {
+  onRetry: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRetry}
+      disabled={disabled}
+      className="mt-2 rounded border border-gray-400 px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {disabled ? "다시 시도 중…" : "다시 시도"}
+    </button>
+  );
+}
+
 function PropertyCard({
   name,
   state,
+  onRetry,
 }: {
   name: string;
   state: PropertyFetchState;
+  onRetry: () => void;
 }) {
   if (state.status === "error") {
     return (
       <div className="rounded border border-gray-300 p-4">
         <div className="font-semibold">{name}</div>
         <div className="mt-2 text-sm text-gray-700">불러오지 못했습니다</div>
-        {/* TODO(9/9): 개별 재시도 버튼. 훅의 refetchProperty(id)는 이미 있다 */}
+        <RetryButton onRetry={onRetry} disabled={false} />
       </div>
     );
   }
 
   if (!state.data) {
+    // `lastError`가 있으면 최초 로딩이 아니라 **재시도 중**이다.
+    // 이때 버튼을 비활성으로 남겨 중복 클릭을 막는다(훅에도 가드가 있다).
+    const isRetrying = state.lastError !== undefined;
     return (
       <div className="rounded border border-gray-300 p-4">
         <div className="font-semibold">{name}</div>
-        <div className="mt-2 text-sm text-gray-500">불러오는 중…</div>
+        <div className="mt-2 text-sm text-gray-500">
+          {isRetrying ? "다시 불러오는 중…" : "불러오는 중…"}
+        </div>
+        {isRetrying && <RetryButton onRetry={onRetry} disabled />}
       </div>
     );
   }
@@ -180,6 +213,7 @@ export default function Dashboard() {
               key={p.property_id}
               name={p.name}
               state={vm.fetchMap[p.property_id] ?? { status: "loading" }}
+              onRetry={() => vm.refetchProperty(p.property_id)}
             />
           ))}
         </div>

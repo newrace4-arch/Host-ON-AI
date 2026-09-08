@@ -50,6 +50,18 @@ export interface PropertyFetchState {
   /** refetching 중에도 직전 성공 데이터를 유지한다. */
   data?: DashboardSummary;
   error?: unknown;
+  /**
+   * 재시도 직전의 에러를 보관한다.
+   *
+   * `error` 상태에서 재시도하면 `status`가 `loading`으로 가며 `error`가
+   * 지워지는데, 재시도가 **또 실패했을 때 직전 에러와 새 에러가 같은
+   * 원인인지** 비교할 근거가 사라진다. 화면에 노출하지는 않고 상태로만
+   * 보관한다.
+   *
+   * 카드가 "최초 로딩"과 "재시도 중"을 구분하는 데도 쓴다 —
+   * `status === 'loading'`이면서 `lastError`가 있으면 재시도 중이다.
+   */
+  lastError?: unknown;
 }
 
 /** 숙소 id → 조회 상태 */

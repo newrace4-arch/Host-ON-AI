@@ -26,6 +26,7 @@ import type {
   DashboardViewModel,
   Property,
   PropertyFetchMap,
+  PropertyFetchState,
 } from "@/types/ui";
 
 const EMPTY_TOTALS: DashboardTotals = {
@@ -71,6 +72,18 @@ export function useDashboardSummary(): DashboardViewModel {
   const [listError, setListError] = useState<unknown>(undefined);
 
   /**
+   * 최신 fetchMap을 담는 거울.
+   *
+   * 재시도 가드(진행 중이면 재요청하지 않음)를 **setFetchMap 업데이터
+   * 바깥에서** 판정하기 위해 둔다. 업데이터 안에서 외부 변수를 바꾸면
+   * StrictMode가 업데이터를 두 번 호출할 때 두 번째 호출이 이미 갱신된
+   * 상태를 보고 플래그를 뒤집어, 실제 요청이 나가지 않는다(9/9에 실제로
+   * 겪음). **상태 갱신 함수는 순수하게 유지한다.**
+   */
+  const fetchMapRef = useRef<PropertyFetchMap>({});
+  fetchMapRef.current = fetchMap;
+
+  /**
    * StrictMode의 이중 마운트에서 목록을 두 번 불러오지 않도록 한다.
    *
    * ⚠️ 이 가드와 `cancelled` 플래그를 함께 쓰면 안 된다(9/8에 실제로 겪음):
@@ -85,6 +98,7 @@ export function useDashboardSummary(): DashboardViewModel {
   const loadSummary = useCallback(async (propertyId: number) => {
     try {
       const data = await fetchDashboardSummary(propertyId);
+      // 성공했으므로 lastError도 함께 버린다.
       setFetchMap((prev) => ({
         ...prev,
         [propertyId]: { status: "success", data },
@@ -93,7 +107,13 @@ export function useDashboardSummary(): DashboardViewModel {
       setFetchMap((prev) => ({
         ...prev,
         // 실패 시 직전 data는 버린다 — 낡은 값을 성공처럼 보여주지 않는다.
-        [propertyId]: { status: "error", error },
+        // lastError는 유지한다: 재시도가 또 실패했을 때 직전 에러와
+        // 새 에러를 비교할 수 있어야 한다.
+        [propertyId]: {
+          status: "error",
+          error,
+          lastError: prev[propertyId]?.lastError,
+        },
       }));
     }
   }, []);
@@ -135,21 +155,29 @@ export function useDashboardSummary(): DashboardViewModel {
    * success였으면 refetching(기존 data 유지 — 화면이 깜빡이지 않는다),
    * error였으면 보여줄 data가 없으므로 loading으로 간다.
    *
-   * TODO(9/9 재시도 버튼 UI 작업 시): error 상태에서 재시도하면
-   * loading으로 전이되며 기존 error 정보가 사라진다. 재시도가 또
-   * 실패했을 때 직전 에러와 새 에러가 같은 원인인지 구분할 근거가
-   * 없어진다. lastError 보존을 검토할 것.
+   * error에서 재시도할 때는 그 에러를 **`lastError`로 옮겨 보관**한다
+   * (9/9 처리). `status`가 loading이 되며 `error`가 지워지는데, 재시도가
+   * 또 실패했을 때 직전 에러와 비교할 근거가 없으면 같은 원인인지 알 수
+   * 없기 때문이다. 화면에는 노출하지 않는다.
+   *
+   * 이미 진행 중이면(loading·refetching) 아무것도 하지 않는다 —
+   * 버튼 중복 클릭으로 같은 요청이 겹치지 않게 한다.
    */
   const refetchProperty = useCallback(
     (propertyId: number) => {
-      setFetchMap((prev) => {
-        const current = prev[propertyId];
-        const next =
-          current?.status === "success" && current.data
-            ? { status: "refetching" as const, data: current.data }
-            : { status: "loading" as const };
-        return { ...prev, [propertyId]: next };
-      });
+      const current = fetchMapRef.current[propertyId];
+
+      // 이미 진행 중이면 아무것도 하지 않는다(버튼 중복 클릭 방지).
+      if (current?.status === "loading" || current?.status === "refetching") {
+        return;
+      }
+
+      const next: PropertyFetchState =
+        current?.status === "success" && current.data
+          ? { status: "refetching", data: current.data }
+          : { status: "loading", lastError: current?.error };
+
+      setFetchMap((prev) => ({ ...prev, [propertyId]: next }));
       void loadSummary(propertyId);
     },
     [loadSummary],
