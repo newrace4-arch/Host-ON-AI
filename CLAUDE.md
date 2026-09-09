@@ -300,9 +300,22 @@ Claude Code 외에 **Cowork**도 파일 편집이 가능한 또 다른 Claude
   PROPERTY↔ROOM/BED 교차 충돌은 애플리케이션 트랜잭션에서 검증.
 - `CleaningTask`는 `Reservation`과 1:1 (UNIQUE 제약 필수)
 - `InquiryResponse`는 1:N + `is_latest` 플래그 (재시도/재답변 대응)
+- **[v1.3] `Inquiry.reservation_id`는 nullable**(예약 전 사전문의 지원).
+  단, `reservation_id`가 NULL이면 복합FK가 `MATCH SIMPLE` 규칙에 따라
+  검사를 통째로 스킵하므로 **`Inquiry.property_id`에 단독 FK가 반드시
+  함께 걸려 있어야 한다**(둘 중 하나만 만들면 데이터 격리에 구멍).
+  (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
+- **[v1.3] `ActionItem.reservation_id`는 복합FK**
+  `(reservation_id, property_id) → reservations`. 단독 FK로 만들면 다른
+  숙소의 예약을 참조하는 액션아이템이 생긴다. 삭제 정책은
+  `ON DELETE SET NULL (reservation_id)`이며 **PostgreSQL 15+ 필요**.
+  (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
 - `ActionItems.risk_level`은 **AI의 법적/안전 판단이 아니라 규칙기반
   운영 우선순위**다. 이 명칭 때문에 AI가 위험을 판단하는 것처럼 보이는
   기능을 만들지 않는다.
+- **동적 가격조정에는 전용 테이블을 만들지 않는다.** 추천 결과는
+  `ACTION_ITEMS`(`category='PRICE_ADJUSTMENT'` / `'PRICE_NEGLECT'`)
+  카드로만 표현한다(API Contract 13절). (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
 - 전체 DDL과 근거는 `3rd_host_ai_db_spec_v1.md` 참고 — 이 파일이 스키마의
   최종 권위 문서다.
 
@@ -355,8 +368,11 @@ C:\3rd host AI\
   `class CleaningTask(Base):`)
 - **Pydantic 스키마**: `[도메인][용도]Schema/DTO` 파스칼케이스
   (예: `ReservationCreateRequest`, `DashboardSummaryResponse`)
-- **DB 컬럼/필드명**: DB명세서(v1.3)와 100% 일치하는 snake_case
-  (`weekday_adjustment_enabled`, `applied_commission_rate`)
+- **DB 컬럼/필드명**: DB명세서(**v1.3**)와 100% 일치하는 snake_case
+  (`weekday_adjustment_enabled`, `applied_commission_rate`).
+  ⚠️ 비슷한 이름 혼동 주의: 예약의 실수령액은 `net_amount`,
+  월정산의 실수령액은 `net_payout` — 서로 다른 테이블의 다른 컬럼이다
+  (9/4 검증에서 API Contract가 이를 섞어 쓴 것이 발견됨) (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
 - **라우터 함수명**: `create_reservation`, `get_dashboard_summary` 형태
 - **프론트 컴포넌트**: 파스칼케이스(`ActionCenterQueue.tsx`)
 - **프론트 훅/유틸**: 카멜케이스(`useReservation.ts`, `formatCurrency.ts`)
@@ -376,14 +392,20 @@ C:\3rd host AI\
    확정+해당월 예약 `financial_status` 일괄변경을 단일 트랜잭션
    (`async with db.begin():`)으로 묶는다.
 4. **재시도 통제**: `retry_count = INQUIRY_RESPONSES 레코드수 - 1`,
-   `count>=3`이면 429+`MAX_RETRY_EXCEEDED`. `regenerate`는
+   **`retry_count >= 2`이면 429+`MAX_RETRY_EXCEEDED`** (재시도 상한
+   **2회** = 문의 1건당 Claude 호출 최대 3회: 최초1 + 재시도2.
+   9/4 검증에서 이 줄만 `>=3`으로 잘못 적혀 있던 것을 API Contract·
+   state_events·troubleshooting·체크리스트 4개 문서에 맞춰 정정.
+   (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)). `regenerate`는
    `SELECT...FOR UPDATE`로 행잠금. `is_latest` 갱신은 반드시
    UPDATE(false) 먼저, INSERT(true) 나중(순서 바뀌면 부분UNIQUE
    인덱스 위반). Claude 타임아웃(최초10초/재시도5초)은 사용자
    재시도 카운트와 **별도로** 시스템이 1회만 자동재시도 후 폴백.
 5. **청소 생성 시점**: 예약이 `CONFIRMED` 되는 **즉시**(체크아웃
    당일 아님) `CLEANING_TASKS`를 `PENDING`으로 선제생성
-   (`scheduled_date=check_out`). 체크아웃 자체는 `checkout_time`
+   (`scheduled_at = check_out + properties.checkout_time`, 즉 실제
+   체크아웃 시각. v1.3에서 `scheduled_date`→`scheduled_at` 개명,
+   타입은 TIMESTAMPTZ 그대로. (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)). 체크아웃 자체는 `checkout_time`
    기준 배치가 별도로 `COMPLETED` 전이시킨다. `ISSUE` 상태는
    `IN_PROGRESS`/`TASK_COMPLETED`로 복귀 가능해야 함(막다른 상태 금지).
 6. **공백일 배치(00:00)**: 평일 D-7 -1,500원/D-3 -3,000원, 주말+3,000원/
@@ -596,6 +618,15 @@ C:\3rd host AI\
 - DB 구조를 하나라도 변경하면 항상 이 순서로 갱신한다:
   `DB 명세서 수정 → ERD 수정 → API Contract 영향 확인 → 체크리스트 수정 → git commit`.
   체크리스트를 먼저 고치지 않는다.
+- **[9/4 검증에서 얻은 규칙] API Contract에 엔드포인트를 새로 적을 때는,
+  그 요청/응답 데이터를 실제로 저장할 컬럼이 명세서에 있는지 먼저
+  확인한다.** 9/4 검증에서 `sync-errors`(실패사유)와 `photo`(청소사진)
+  두 API가 "저장할 곳이 없는 API"로 발견됐다. API를 먼저 쓰고 스키마를
+  나중에 맞추는 순서는 금지. (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
+- **[9/4 검증에서 얻은 규칙] 한 사실이 여러 문서에 적히면 숫자·필드명은
+  반드시 한 곳을 원본으로 삼는다.** 재시도 상한(2회)이 5개 문서에
+  흩어져 있다가 CLAUDE.md만 3으로 어긋나 있었다. 값이 바뀌면 검색으로
+  전수 확인할 것. (9/4 확정 → 9/5 `3bcedc3`에서 소실 → 9/9 복원)
 
 ## 참고 문서
 
