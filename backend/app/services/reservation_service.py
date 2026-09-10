@@ -35,6 +35,7 @@ from app.models.enums import BookableUnitType, ReservationStatus
 from app.models.property import Property
 from app.models.reservation import Reservation
 from app.schemas.reservation import ReservationCreateRequest
+from app.utils.db_errors import violates_constraint
 
 # 겹침 판정 대상 상태. EXCLUDE 제약 3종의 WHERE절과 반드시 같은 집합이어야 한다
 #   — 여기만 넓히거나 좁히면 앱과 DB의 판정이 어긋난다.
@@ -269,22 +270,25 @@ def _translate_integrity_error(exc: IntegrityError) -> Exception:
 
     앱 검사를 통과한 뒤에도 동시성 때문에 EXCLUDE에 걸릴 수 있고, 그때
     500을 그대로 내보내면 호스트에게 원인이 전달되지 않는다.
+
+    ⚠️ 제약명 판정은 반드시 `violates_constraint()`를 쓴다. asyncpg에서는
+    `exc.orig`에 `constraint_name` 속성이 아예 없어 직접 `getattr`로
+    비교하면 **분기가 항상 거짓**이 된다(9/10 실측, troubleshooting 참고).
     """
     orig = exc.orig
     sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    constraint = getattr(orig, "constraint_name", "") or ""
 
     if sqlstate == "23P01":  # exclusion_violation
         return ReservationOverlapError("같은 기간에 이미 확정된 예약이 있습니다.")
     if sqlstate == "23503":  # foreign_key_violation
         # 계층 복합FK 위반 = 다른 숙소 소속 객실/침대/채널을 참조한 경우
-        if constraint.startswith("fk_reservations_"):
+        if violates_constraint(exc, "fk_reservations_"):
             return InvalidUnitHierarchyError(
                 "지정한 객실/침대/채널이 이 숙소 소속이 아닙니다.",
                 code="INVALID_UNIT_HIERARCHY",
             )
         return ResourceNotFoundError("참조 대상 리소스를 찾을 수 없습니다.")
-    if sqlstate == "23514" and constraint == "ck_reservations_unit_shape":
+    if sqlstate == "23514" and violates_constraint(exc, "ck_reservations_unit_shape"):
         return InvalidUnitHierarchyError(
             "room_id/bed_id 조합이 올바르지 않습니다.", code="INVALID_UNIT_HIERARCHY"
         )
