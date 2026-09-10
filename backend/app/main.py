@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.api_router import api_router
 from app.core.config import settings
 from app.core.database import engine
+from app.core.dependencies import assert_auth_stub_safe
 from app.core.exceptions import AppError
 
 
@@ -27,6 +28,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     실제 요청이 들어올 때 풀이 알아서 만든다. 종료 시에는 열린 커넥션을
     정리한다.
     """
+    # 인증 스텁 가드 — 개발 환경이 아닌데 스텁이 켜져 있으면 여기서 죽는다.
+    #   요청 시점이 아니라 **기동 시점**에 막아야 배포 로그에서 바로 드러난다
+    #   (app/core/dependencies.py 참고). DB 왕복이 없어 위 원칙과도 어긋나지 않는다.
+    assert_auth_stub_safe(settings)
     yield
     await engine.dispose()
 
