@@ -26,10 +26,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import httpx
 from icalendar import Calendar
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import InvalidUnitHierarchyError, ReservationOverlapError
+from app.models.channel import ChannelConnection
+from app.models.enums import SyncStatus
+from app.models.reservation import Reservation
+from app.schemas.reservation import ReservationCreateRequest
+from app.services.channel_service import get_owned_connection
+from app.services.reservation_service import create_reservation
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +184,151 @@ async def fetch_and_parse(
 ) -> list[IcalEvent]:
     """가져오기 + 파싱. 실패는 전부 `IcalSyncError` 하나로 올라온다."""
     return parse_ical(await fetch_ical(url, timeout=timeout))
+
+
+# ===========================================================================
+# 동기화 적용 — 파싱 결과를 RESERVATIONS에 반영한다
+# ===========================================================================
+
+
+@dataclass
+class SyncOutcome:
+    """동기화 1회의 결과. 호스트가 "무엇을 했는지" 알 수 있어야 한다."""
+
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    error: str | None = None
+
+
+def _to_create_request(
+    conn: "ChannelConnection", event: IcalEvent
+) -> "ReservationCreateRequest":
+    """iCal 이벤트 → 예약 생성 요청.
+
+    iCal 피드는 **객실/침대를 알려주지 않는다.** 그래서 room_id/bed_id는
+    항상 None이고, 결과적으로 `bookable_unit_type=PROPERTY`인 숙소만
+    자동 반영된다. ROOM/BED 단위 숙소는 계층 검증에서 걸러져 skipped로
+    집계된다(아래 sync_connection 참고).
+    """
+    return ReservationCreateRequest(
+        property_id=conn.property_id,
+        channel_connection_id=conn.connection_id,
+        external_uid=event.uid,
+        guest_name=event.summary,
+        check_in=event.check_in,
+        check_out=event.check_out,
+    )
+
+
+async def _apply_event(
+    db: "AsyncSession", conn: "ChannelConnection", host_id: int, event: IcalEvent
+) -> str:
+    """이벤트 1건을 반영한다. 반환값은 'created' / 'updated' / 'skipped'.
+
+    **이벤트마다 독립적으로 커밋한다.** 한 건이 실패해도 앞서 반영한
+    예약이 함께 사라지지 않게 하기 위함이다(Graceful Degradation).
+    """
+    existing = await db.scalar(
+        select(Reservation).where(
+            Reservation.channel_connection_id == conn.connection_id,
+            Reservation.external_uid == event.uid,
+        )
+    )
+
+    if existing is not None:
+        # 이미 반영된 예약 — 기간·게스트명이 바뀌었을 때만 갱신한다.
+        #   UNIQUE(channel_connection_id, external_uid)가 멱등성 키다.
+        changed = (
+            existing.check_in != event.check_in
+            or existing.check_out != event.check_out
+            or existing.guest_name != event.summary
+        )
+        if not changed:
+            return "skipped"
+
+        existing.check_in = event.check_in
+        existing.check_out = event.check_out
+        existing.guest_name = event.summary
+        await db.commit()
+        return "updated"
+
+    await create_reservation(
+        db, host_id=host_id, payload=_to_create_request(conn, event)
+    )
+    await db.commit()
+    return "created"
+
+
+async def sync_connection(
+    db: "AsyncSession", *, connection_id: int, host_id: int
+) -> tuple["ChannelConnection", SyncOutcome]:
+    """수동 동기화 1회. 실패해도 **기존 캘린더 상태를 그대로 둔다.**
+
+    피드에서 사라진 예약을 삭제하지 않는다 — 취소 반영은 별도 판단이
+    필요하고(취소인지 일시적 피드 오류인지 구분 불가), 잘못 지우면 복구가
+    어렵다. 오늘 범위는 추가·갱신까지다.
+
+    겹침 처리는 **오늘 범위 밖이다**(r49, 9/12). iCal 동기화 중 충돌이
+    났을 때 건너뛸지 전체를 실패로 볼지가 어느 문서에도 정의돼 있지
+    않다. 지금은 그 건만 skipped로 세고 넘어간다.
+    """
+    conn = await get_owned_connection(db, connection_id, host_id)
+    outcome = SyncOutcome()
+
+    if not conn.ical_url:
+        return await _mark_failed(db, conn, "iCal URL이 등록되지 않았습니다", outcome)
+
+    try:
+        events = await fetch_and_parse(conn.ical_url)
+    except IcalSyncError as exc:
+        return await _mark_failed(db, conn, str(exc), outcome)
+
+    for event in events:
+        try:
+            result = await _apply_event(db, conn, host_id, event)
+            setattr(outcome, result, getattr(outcome, result) + 1)
+        except (ReservationOverlapError, InvalidUnitHierarchyError) as exc:
+            # 겹침: r49(9/12)에서 다룬다. 계층: iCal이 객실/침대를 주지 않아
+            #   ROOM/BED 단위 숙소는 자동 반영 대상이 아니다.
+            outcome.skipped += 1
+            logger.info("iCal 이벤트 반영 건너뜀 uid=%s: %s", event.uid, exc)
+            await db.rollback()
+        except Exception as exc:
+            outcome.skipped += 1
+            logger.warning("iCal 이벤트 반영 실패 uid=%s", event.uid, exc_info=exc)
+            await db.rollback()
+
+    conn.sync_status = SyncStatus.SYNCED
+    conn.last_synced_at = datetime.now(timezone.utc)
+    # 성공 시 반드시 NULL로 초기화한다(v1.3 운용 규칙) — 지난 에러가 화면에 남지 않게.
+    conn.last_error_message = None
+    await db.commit()
+
+    return conn, outcome
+
+
+async def _mark_failed(
+    db: "AsyncSession", conn: "ChannelConnection", message: str, outcome: SyncOutcome
+) -> tuple["ChannelConnection", SyncOutcome]:
+    """실패를 DB에 기록한다. **기존 예약은 건드리지 않는다.**
+
+    `last_synced_at`은 갱신하지 않는다 — 이 값은 "마지막으로 **성공**한
+    동기화 시각"이다. 실패까지 여기에 찍으면 호스트가 "언제부터 캘린더가
+    낡았는지"를 알 수 없게 된다.
+    """
+    conn.sync_status = SyncStatus.FAILED
+    conn.last_error_message = message
+    await db.commit()
+
+    outcome.error = message
+    logger.warning(
+        "iCal 동기화 실패 connection_id=%s: %s", conn.connection_id, message
+    )
+
+    # TODO(10/3): ACTION_ITEMS에
+    #   category='CHANNEL_SYNC_FAILED' 카드 발행
+    #   액션센터 구현이 10/3이라 오늘은 DB 기록까지만 한다. 대시보드 배지는
+    #   만들지 않는다 — 배지는 눈에 띄지만 처리 흐름이 없다.
+
+    return conn, outcome

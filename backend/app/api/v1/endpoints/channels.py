@@ -23,8 +23,9 @@ from app.schemas.channel import (
     ChannelConnectionCreateRequest,
     ChannelConnectionResponse,
     SyncErrorResponse,
+    SyncResultResponse,
 )
-from app.services import channel_service
+from app.services import channel_service, ical_sync
 
 router = APIRouter(tags=["channels"])
 
@@ -78,6 +79,36 @@ async def delete_channel(
     )
     await db.commit()
     return {"data": {"connection_id": connection_id, "deleted": True}, "error": None}
+
+
+@router.post(
+    "/channels/{connection_id}/sync",
+    summary="수동 동기화 트리거",
+)
+async def sync_channel(
+    connection_id: int, db: DbSession, host_id: CurrentHostId
+) -> dict[str, Any]:
+    """iCal을 가져와 예약에 반영한다.
+
+    **동기화 실패는 이 엔드포인트의 실패가 아니다.** 외부 서버가 응답하지
+    않거나 깨진 데이터를 보낸 것은 호스트가 조치할 일이지 요청 자체의
+    오류가 아니므로, 200으로 응답하고 `sync_status=FAILED`와
+    `last_error_message`로 결과를 알린다(Graceful Degradation, 규칙 11).
+    404는 연결이 없거나 타인 소유일 때만 난다.
+    """
+    conn, outcome = await ical_sync.sync_connection(
+        db, connection_id=connection_id, host_id=host_id
+    )
+    body = SyncResultResponse(
+        connection_id=conn.connection_id,
+        sync_status=conn.sync_status,
+        last_synced_at=conn.last_synced_at,
+        last_error_message=ChannelConnectionResponse.from_model(conn).last_error_message,
+        created_count=outcome.created,
+        updated_count=outcome.updated,
+        skipped_count=outcome.skipped,
+    )
+    return {"data": body.model_dump(), "error": None}
 
 
 @router.get(
