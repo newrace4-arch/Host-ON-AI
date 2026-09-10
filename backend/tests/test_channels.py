@@ -140,20 +140,25 @@ async def test_other_hosts_connection_is_404(
     db.add(stranger)
     await db.commit()
 
+    # rollback은 인스턴스 속성을 만료시켜 이후 stranger.host_id 접근이 지연로딩
+    #   (동기 IO)을 유발한다 → async 컨텍스트에서 MissingGreenlet.
+    #   conftest의 host 픽스처와 같은 이유로 id를 미리 값으로 뽑아둔다.
+    stranger_id = stranger.host_id
+    connection_id = conn.connection_id
+    property_id = prop.property_id
+
     try:
         with pytest.raises(ResourceNotFoundError):
-            await channel_service.get_owned_connection(
-                db, conn.connection_id, stranger.host_id
-            )
+            await channel_service.get_owned_connection(db, connection_id, stranger_id)
 
         # 목록 경로도 숙소 소유권에서 먼저 막힌다.
         with pytest.raises(ResourceNotFoundError):
             await channel_service.list_channels(
-                db, property_id=prop.property_id, host_id=stranger.host_id
+                db, property_id=property_id, host_id=stranger_id
             )
     finally:
         await db.rollback()
-        stored = await db.get(Host, stranger.host_id)
+        stored = await db.get(Host, stranger_id)
         if stored is not None:
             await db.delete(stored)
             await db.commit()
