@@ -263,7 +263,9 @@ async def _apply_event(
 
     if existing is not None:
         # 이미 반영된 예약 — 기간·게스트명이 바뀌었을 때만 갱신한다.
-        #   UNIQUE(channel_connection_id, external_uid)가 멱등성 키다.
+        #   RESERVATIONS.uq_reservation_channel_uid
+        #   (channel_connection_id, external_uid)가 멱등성 키다.
+        #   ⚠️ 이 제약은 CHANNEL_CONNECTIONS가 아니라 RESERVATIONS에 있다.
         changed = (
             existing.check_in != event.check_in
             or existing.check_out != event.check_out
