@@ -767,6 +767,68 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 
 ---
 
+### 3.3 POST /channels/{connection_id}/sync 응답 스펙 (v2.4 신규 확정)
+
+> 9/10 구현 시 이 엔드포인트에는 3절 표 한 줄만 있고 **응답 스펙이 없었다.**
+> 이 절이 응답 스펙의 원본(SSOT)이다. 건수는 전부 **집계값**이라 DB 스키마
+> 변경을 요구하지 않는다.
+
+**동기화 실패는 이 엔드포인트의 실패가 아니다.** 외부 서버가 응답하지
+않거나 깨진 데이터를 보낸 것은 호스트가 조치할 일이지 요청 자체의 오류가
+아니므로 **200으로 응답**하고 `sync_status=FAILED`와 `last_error_message`로
+결과를 알린다(Graceful Degradation, 코딩규칙 11). `404`는 연결이 없거나
+타인 소유일 때만 난다.
+
+```json
+{
+  "data": { "connection_id": 7,
+            "sync_status": "SYNCED",
+            "last_synced_at": "2026-09-10T03:14:30Z",
+            "last_error_message": null,
+
+            "created_count": 2,
+            "updated_count": 1,
+            "unchanged_count": 5,
+            "skipped_no_room_count": 0,
+            "skipped_overlap_count": 0,
+            "failed_count": 0,
+
+            "invalid_event_count": 1 },
+  "error": null
+}
+```
+
+**건수 필드 — 사유별로 나눈다 (v2.4)**
+
+| 필드 | 뜻 | 호스트가 할 일 |
+|---|---|---|
+| `created_count` | 새로 만든 예약 | — |
+| `updated_count` | 기간·게스트명이 바뀌어 갱신 | — |
+| `unchanged_count` | 이미 반영돼 있고 변경 없음 | **없음(정상)** |
+| `skipped_no_room_count` | **객실 미지정** — `bookable_unit_type`이 `ROOM`/`BED`인 숙소 | **구조적 한계.** 피드를 고쳐도 해결되지 않는다 |
+| `skipped_overlap_count` | **기간 겹침** — 처리 방침 미정의 | 캘린더 확인 |
+| `failed_count` | 예상 못 한 오류 | **서버 로그 확인 필요** |
+| `invalid_event_count` | 피드에서 **버려진 이벤트** 수(UID·날짜 누락, 종료<=시작) | 피드 제공처 확인 |
+
+> **왜 하나로 묶지 않는가**: `skipped: 3` 하나로는 **"이미 반영돼서 넘어간
+> 것"과 "객실을 몰라서 못 넣은 것"이 구분되지 않는다.** 앞은 아무것도 안
+> 해도 되고 뒤는 조치가 필요한데, 같은 숫자로 보이면 호스트가 판단할 수
+> 없다.
+>
+> **`invalid_event_count`만 층이 다르다.** 나머지 여섯은 **예약 반영
+> 단계**의 결과이고 이것은 **피드 파싱 단계**의 결과다. 파싱에서 버려진
+> 건은 애초에 반영 시도조차 되지 않는다 — 이 값을 응답에 넣지 않으면
+> **10건짜리 피드에서 3건이 버려져도 호스트에게는 7건만 처리된 것으로
+> 보인다.**
+
+> **`skipped_no_room_count`가 0이 아니라는 것은** 그 숙소가 `ROOM`/`BED`
+> 단위인데 iCal이 객실을 알려주지 않는다는 뜻이다. iCal 피드에는 객실
+> 식별자가 없고 `CHANNEL_CONNECTIONS`에도 객실을 담을 자리가 없어
+> **현재 구조로는 자동 반영이 불가능**하다. 처리 방침은 **r49(9/12)**에서
+> 정한다.
+
+---
+
 ## 4. 예약 (RESERVATIONS) ⭐ 핵심
 
 | Method | Endpoint | 설명 |

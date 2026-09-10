@@ -43,7 +43,7 @@ VALID_ICS = "\r\n".join(
 
 
 def test_parse_valid_ics():
-    events = parse_ical(VALID_ICS)
+    events = parse_ical(VALID_ICS).events
 
     assert len(events) == 1
     assert events[0].uid == "reservation-001@test"
@@ -61,7 +61,7 @@ def test_parse_accepts_datetime_form():
         "DTSTART;VALUE=DATE:20260903", "DTSTART:20260903T150000"
     ).replace("DTEND;VALUE=DATE:20260906", "DTEND:20260906T110000")
 
-    events = parse_ical(ics)
+    events = parse_ical(ics).events
 
     assert str(events[0].check_in) == "2026-09-03"
     assert str(events[0].check_out) == "2026-09-06"
@@ -115,9 +115,10 @@ def test_parse_skips_bad_events_but_keeps_good_ones():
         ]
     )
 
-    events = parse_ical(ics)
+    parsed = parse_ical(ics)
 
-    assert [e.uid for e in events] == ["good@test"]
+    assert [e.uid for e in parsed.events] == ["good@test"]
+    assert parsed.invalid_count == 2
 
 
 def test_parse_truncates_to_column_limits():
@@ -126,7 +127,7 @@ def test_parse_truncates_to_column_limits():
         "Reserved - Hong Gildong", "s" * 300
     )
 
-    event = parse_ical(ics)[0]
+    event = parse_ical(ics).events[0]
 
     assert len(event.uid) == 150
     assert len(event.summary) == 100
@@ -221,4 +222,6 @@ def test_empty_calendar_is_valid_not_an_error():
         ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//test//EN", "END:VCALENDAR", ""]
     )
 
-    assert parse_ical(empty) == []
+    parsed = parse_ical(empty)
+    assert parsed.events == []
+    assert parsed.invalid_count == 0

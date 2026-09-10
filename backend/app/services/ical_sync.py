@@ -68,6 +68,18 @@ class IcalEvent:
     summary: str | None
 
 
+@dataclass(frozen=True)
+class ParsedFeed:
+    """피드 파싱 결과. **버려진 건수를 함께 돌려준다.**
+
+    버린 건수를 로그에만 남기면 **호스트는 피드가 이상하다는 것을 모른다** —
+    10건짜리 피드에서 3건이 버려져도 응답에는 7건만 처리된 것으로 보인다.
+    """
+
+    events: list[IcalEvent]
+    invalid_count: int
+
+
 def _to_date(value: object) -> date | None:
     """DTSTART/DTEND를 `date`로 정규화한다.
 
@@ -82,8 +94,8 @@ def _to_date(value: object) -> date | None:
     return None
 
 
-def parse_ical(raw: str | bytes) -> list[IcalEvent]:
-    """.ics 텍스트 → 이벤트 목록. 형식이 깨져 있으면 `IcalSyncError`.
+def parse_ical(raw: str | bytes) -> ParsedFeed:
+    """.ics 텍스트 → `ParsedFeed`. 형식이 깨져 있으면 `IcalSyncError`.
 
     개별 이벤트가 이상한 경우(UID 없음, 날짜 없음, 종료<=시작)는 **그 건만
     건너뛴다.** 한 건 때문에 캘린더 전체를 실패로 만들면, 남의 서버가 보낸
@@ -132,7 +144,7 @@ def parse_ical(raw: str | bytes) -> list[IcalEvent]:
     if skipped:
         logger.info("iCal 이벤트 %d건을 건너뛰었다(필수 필드 누락 또는 형식 오류)", skipped)
 
-    return events
+    return ParsedFeed(events=events, invalid_count=skipped)
 
 
 async def fetch_ical(url: str, *, timeout: float = ICAL_TIMEOUT_SECONDS) -> str:
@@ -181,7 +193,7 @@ async def fetch_ical(url: str, *, timeout: float = ICAL_TIMEOUT_SECONDS) -> str:
 
 async def fetch_and_parse(
     url: str, *, timeout: float = ICAL_TIMEOUT_SECONDS
-) -> list[IcalEvent]:
+) -> ParsedFeed:
     """가져오기 + 파싱. 실패는 전부 `IcalSyncError` 하나로 올라온다."""
     return parse_ical(await fetch_ical(url, timeout=timeout))
 
@@ -193,11 +205,24 @@ async def fetch_and_parse(
 
 @dataclass
 class SyncOutcome:
-    """동기화 1회의 결과. 호스트가 "무엇을 했는지" 알 수 있어야 한다."""
+    """동기화 1회의 결과.
 
-    created: int = 0
-    updated: int = 0
-    skipped: int = 0
+    **성격이 다른 것을 한 칸에 담지 않는다.** `skipped` 하나에 묶어 두면
+    호스트가 `skipped: 3`을 보고도 **"이미 반영돼서"인지 "구조적으로 못
+    넣어서"인지 구분할 수 없다** — 앞은 아무것도 안 해도 되고 뒤는 조치가
+    필요하다.
+
+    앞의 여섯은 **예약 반영 단계**, `invalid_events`만 **피드 파싱
+    단계**다. 층이 달라 이름을 나눈다.
+    """
+
+    created: int = 0          # 새로 만든 예약
+    updated: int = 0          # 기간·게스트명이 바뀌어 갱신
+    unchanged: int = 0        # 이미 반영돼 있고 변경 없음 — 정상
+    skipped_no_room: int = 0  # 객실 미지정: iCal이 room/bed를 주지 않는다(구조적)
+    skipped_overlap: int = 0  # 기간 겹침: 처리 방침 미정의(r49, 9/12)
+    failed: int = 0           # 예상 못 한 오류 — 서버 로그를 봐야 한다
+    invalid_events: int = 0   # 파싱 단계에서 버려진 이벤트(필수 필드 누락 등)
     error: str | None = None
 
 
@@ -224,7 +249,7 @@ def _to_create_request(
 async def _apply_event(
     db: "AsyncSession", conn: "ChannelConnection", host_id: int, event: IcalEvent
 ) -> str:
-    """이벤트 1건을 반영한다. 반환값은 'created' / 'updated' / 'skipped'.
+    """이벤트 1건을 반영한다. 반환값은 'created' / 'updated' / 'unchanged'.
 
     **이벤트마다 독립적으로 커밋한다.** 한 건이 실패해도 앞서 반영한
     예약이 함께 사라지지 않게 하기 위함이다(Graceful Degradation).
@@ -245,7 +270,7 @@ async def _apply_event(
             or existing.guest_name != event.summary
         )
         if not changed:
-            return "skipped"
+            return "unchanged"
 
         existing.check_in = event.check_in
         existing.check_out = event.check_out
@@ -280,22 +305,35 @@ async def sync_connection(
         return await _mark_failed(db, conn, "iCal URL이 등록되지 않았습니다", outcome)
 
     try:
-        events = await fetch_and_parse(conn.ical_url)
+        parsed = await fetch_and_parse(conn.ical_url)
     except IcalSyncError as exc:
         return await _mark_failed(db, conn, str(exc), outcome)
 
-    for event in events:
+    # 파싱 단계에서 버려진 건수를 그대로 올린다. 로그에만 남기면 호스트는
+    #   피드가 이상하다는 것을 알 수 없다(10건 중 3건이 버려져도 응답에는
+    #   7건만 처리된 것으로 보인다).
+    outcome.invalid_events = parsed.invalid_count
+
+    for event in parsed.events:
         try:
             result = await _apply_event(db, conn, host_id, event)
             setattr(outcome, result, getattr(outcome, result) + 1)
-        except (ReservationOverlapError, InvalidUnitHierarchyError) as exc:
-            # 겹침: r49(9/12)에서 다룬다. 계층: iCal이 객실/침대를 주지 않아
-            #   ROOM/BED 단위 숙소는 자동 반영 대상이 아니다.
-            outcome.skipped += 1
-            logger.info("iCal 이벤트 반영 건너뜀 uid=%s: %s", event.uid, exc)
+        except InvalidUnitHierarchyError as exc:
+            # iCal 피드는 객실/침대를 알려주지 않는다. ROOM/BED 단위 숙소는
+            #   계층 검증에 걸려 자동 반영 대상이 아니다 — **구조적 한계**라
+            #   호스트가 피드를 고쳐도 해결되지 않는다(9/12 r49에서 다룬다).
+            outcome.skipped_no_room += 1
+            logger.info("iCal 이벤트 건너뜀(객실 미지정) uid=%s: %s", event.uid, exc)
+            await db.rollback()
+        except ReservationOverlapError as exc:
+            # 겹침 처리 방침이 어느 문서에도 정의돼 있지 않다(r49, 9/12).
+            #   지금은 그 건만 세고 넘어간다.
+            outcome.skipped_overlap += 1
+            logger.info("iCal 이벤트 건너뜀(기간 겹침) uid=%s: %s", event.uid, exc)
             await db.rollback()
         except Exception as exc:
-            outcome.skipped += 1
+            # 예상 못 한 오류. 위 둘과 달리 **원인을 서버 로그에서 봐야 한다.**
+            outcome.failed += 1
             logger.warning("iCal 이벤트 반영 실패 uid=%s", event.uid, exc_info=exc)
             await db.rollback()
 

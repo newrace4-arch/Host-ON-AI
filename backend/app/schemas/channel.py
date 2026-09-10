@@ -106,15 +106,25 @@ class SyncErrorResponse(BaseModel):
 
 
 class SyncResultResponse(BaseModel):
-    """POST /channels/{connection_id}/sync 응답.
+    """POST /channels/{connection_id}/sync 응답 (api_contract 3.3절).
 
-    동기화가 무엇을 했는지 호스트가 알 수 있어야 해서 건수를 함께 돌려준다.
+    **건수를 사유별로 나눠 돌려준다.** 하나로 묶으면 호스트가 숫자를 보고도
+    조치가 필요한지 아닌지 판단할 수 없다 — "이미 반영돼서 넘어간 것"과
+    "객실을 몰라서 못 넣은 것"은 성격이 완전히 다르다.
     """
 
     connection_id: int
     sync_status: SyncStatus
     last_synced_at: datetime | None
     last_error_message: str | None
-    created_count: int
-    updated_count: int
-    skipped_count: int
+
+    # --- 예약 반영 단계 ---
+    created_count: int          # 새로 만든 예약
+    updated_count: int          # 기간·게스트명이 바뀌어 갱신
+    unchanged_count: int        # 이미 반영돼 있고 변경 없음 — 정상
+    skipped_no_room_count: int  # 객실 미지정(ROOM/BED 단위 숙소) — 구조적
+    skipped_overlap_count: int  # 기간 겹침 — 처리 방침 미정의(r49)
+    failed_count: int           # 예상 못 한 오류 — 서버 로그 확인 필요
+
+    # --- 피드 파싱 단계(다른 층) ---
+    invalid_event_count: int    # 필수 필드 누락 등으로 버려진 이벤트

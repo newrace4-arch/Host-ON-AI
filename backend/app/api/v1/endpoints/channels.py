@@ -106,7 +106,11 @@ async def sync_channel(
         last_error_message=ChannelConnectionResponse.from_model(conn).last_error_message,
         created_count=outcome.created,
         updated_count=outcome.updated,
-        skipped_count=outcome.skipped,
+        unchanged_count=outcome.unchanged,
+        skipped_no_room_count=outcome.skipped_no_room,
+        skipped_overlap_count=outcome.skipped_overlap,
+        failed_count=outcome.failed,
+        invalid_event_count=outcome.invalid_events,
     )
     return {"data": body.model_dump(), "error": None}
 
