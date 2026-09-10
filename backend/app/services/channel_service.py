@@ -25,6 +25,27 @@ from app.schemas.channel import ChannelConnectionCreateRequest
 from app.services.reservation_service import get_owned_property
 
 
+def violates_constraint(exc: IntegrityError, constraint: str) -> bool:
+    """제약 위반이 `constraint` 때문인지 판정한다.
+
+    ⚠️ **asyncpg 경로에서는 `exc.orig`에 `constraint_name` 속성이 아예
+    없다.** SQLAlchemy가 asyncpg 예외를 자체 DBAPI 예외로 번역하면서
+    `sqlstate`/`pgcode`만 옮기고 제약명은 메시지 문자열에만 남긴다.
+    9/10 실측:
+
+        orig type       : IntegrityError (asyncpg의 UniqueViolationError 아님)
+        sqlstate        : '23505'
+        constraint_name : 속성 없음
+        str(orig)       : ... unique constraint "uq_property_channel"
+
+    그래서 속성과 메시지를 **둘 다** 본다. psycopg(동기, Alembic 경로)에서는
+    속성이 있으므로 드라이버가 바뀌어도 판정이 유지된다.
+    """
+    orig = exc.orig
+    name = getattr(orig, "constraint_name", "") or ""
+    return constraint in name or constraint in str(orig)
+
+
 class ChannelAlreadyConnectedError(AppError):
     """같은 숙소에 같은 채널을 두 번 연결하려 한 경우(409).
 
@@ -100,8 +121,7 @@ async def create_channel(
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        constraint = getattr(exc.orig, "constraint_name", "") or ""
-        if constraint == "uq_property_channel":
+        if violates_constraint(exc, "uq_property_channel"):
             raise ChannelAlreadyConnectedError(
                 "이 숙소에 이미 연결된 채널입니다. "
                 "URL을 바꾸려면 연결을 해제한 뒤 다시 등록하십시오."
