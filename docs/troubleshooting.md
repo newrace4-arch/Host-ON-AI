@@ -1012,6 +1012,138 @@ after   1. Host-Property-Room-Bed 계층 스키마 확정(모두 optional)  ← 
 | 오후 | — | 검증 구멍을 모른 채 재생성 → 유실 |
 | **지금** | **검증을 먼저 고치고 복구** | **(내일 그렇게 한다)** |
 
+### 32. asyncpg에서 제약명 판정이 항상 실패해 DB 제약 위반이 잘못 번역됨 (9/10)
+
+**문제**: DB 제약 위반을 도메인 예외로 옮기는 번역이 **두 분기에서
+조용히 실패**하고 있었다.
+
+| 위반 | 나와야 할 것 | 실제로 나간 것 |
+|---|---|---|
+| 계층 복합FK(23503) | `INVALID_UNIT_HIERARCHY` (400) | `ResourceNotFoundError` — 호스트는 **"예약이 없다"**는 엉뚱한 메시지를 받는다 |
+| `ck_reservations_unit_shape`(23514) | 도메인 예외 (400) | 번역 실패 → 원시 `IntegrityError`가 그대로 올라가 **500** |
+| 채널 중복 등록(23505) | `CHANNEL_ALREADY_CONNECTED` (409) | 원시 `IntegrityError` |
+
+**원인**: SQLAlchemy가 asyncpg 예외를 **자체 DBAPI 예외로 번역**하면서
+`sqlstate`/`pgcode`만 옮기고 **제약명은 메시지 문자열에만 남긴다.**
+
+추측하지 않고 `exc.orig`를 실측했다.
+
+```
+orig type       : IntegrityError   ← asyncpg의 UniqueViolationError가 아니다
+sqlstate        : '23505'
+pgcode          : '23505'
+constraint_name : 속성 없음 (dir()에 제약 관련 항목 0개)
+str(orig)       : ... unique constraint "uq_property_channel"
+```
+
+따라서 아래 코드는 **항상 `""`를 돌려받아 분기가 결코 참이 되지
+않는다.**
+
+```python
+constraint = getattr(orig, "constraint_name", "") or ""   # asyncpg에서 항상 ""
+if constraint.startswith("fk_reservations_"):             # 결코 참이 되지 않음
+if sqlstate == "23514" and constraint == "ck_reservations_unit_shape":  # 〃
+```
+
+`23P01`(EXCLUDE 겹침) 분기는 `sqlstate`만 보므로 **정상 작동했다.**
+그래서 겉으로는 예외 번역이 동작하는 것처럼 보였다.
+
+**해결**: `violates_constraint()`가 **속성과 메시지를 둘 다** 보게 한다.
+psycopg(동기, Alembic 경로)에서는 속성이 있으므로 드라이버가 바뀌어도
+판정이 유지된다.
+
+```python
+def violates_constraint(exc: IntegrityError, constraint: str) -> bool:
+    orig = exc.orig
+    name = getattr(orig, "constraint_name", "") or ""
+    return constraint in name or constraint in str(orig)
+```
+
+이 함수를 `app/utils/db_errors.py`로 옮겨 두 서비스가 공유한다.
+`channel_service`가 이미 `reservation_service`를 import하고 있어
+**역방향 import는 순환**이 되기 때문이다. 정산·청소 서비스도 같은 판정이
+필요할 것이라 서비스 모듈이 아닌 곳에 두는 편이 맞다.
+
+**왜 테스트 18건이 통과했는가 — 이 결함의 핵심**
+
+`test_reservation_integrity.py` 18건이 전부 통과하는 상태에서 코드는
+틀려 있었다. **테스트가 전부 서비스 레이어를 거치기 때문이다.**
+
+```
+요청 → validate_unit_hierarchy() / Pydantic _validate_shape  ← 여기서 막힌다
+                                                              ↓ 도달하지 않음
+                                                        DB 제약 → 예외 번역
+```
+
+애플리케이션 검증이 잘못된 조합을 **DB에 닿기 전에** 막아버리므로
+제약명 분기가 **한 번도 실행되지 않았다.** 이 결함은 서비스 검사와
+INSERT 사이에 다른 트랜잭션이 끼어드는 **동시성 상황의 마지막
+방어선에서만** 드러난다.
+
+**어떻게 잡았는가**
+
+우연이 아니라 **다른 작업의 부산물**이었다. `channel_service`에 같은
+결함을 고치던 중(`00ade49`), 새로 만든 `test_duplicate_channel_is_409`가
+처음 돌면서 중복 등록이 409가 아니라 원시 `IntegrityError`로 새어
+나갔다. 추측하지 않고 `exc.orig`를 실측해 원인을 확정한 뒤, **같은
+패턴이 저장소에 더 있는지 전수 검색**해 `reservation_service` 1곳을
+찾았다.
+
+> 전수 검색을 하지 않았다면 채널 쪽만 고치고 예약 쪽은 그대로 남았을
+> 것이다. **원인을 확정한 직후가 같은 결함을 찾기 가장 싼 시점이다.**
+
+**테스트를 어떻게 짰는가**
+
+기존 방식대로 서비스 레이어를 거쳐 짜면 **이번에도 통과하고 아무것도
+검증하지 못한다.** 그래서 애플리케이션 레이어를 **의도적으로 우회**했다.
+
+```python
+db.add(reservation)      # 서비스 함수를 거치지 않고 모델을 직접 add
+await db.flush()         # DB 제약까지 도달시킨다
+except IntegrityError as exc:
+    translated = _translate_integrity_error(exc)   # 번역 결과를 직접 검증
+```
+
+| 위반 | 만드는 방법 |
+|---|---|
+| 계층 복합FK | 숙소 A의 예약에 **숙소 B의 `room_id`** 를 넣는다 |
+| CHECK | **`bed_id`만 있고 `room_id`가 NULL** (`room_id`가 NULL이라 `fk_reservations_bed_room`은 MATCH SIMPLE로 스킵되어 CHECK만 발동) |
+
+**수정 전 코드에서 먼저 돌려 2건이 실패하는 것을 확인한 뒤 수정했다.**
+
+```
+E  AssertionError: 계층 FK 위반이 번역되지 않았다: ResourceNotFoundError
+E  AssertionError: CHECK 위반이 번역되지 않아 500이 된다: IntegrityError
+2 failed
+```
+
+실패 메시지가 진단과 정확히 일치했다. 수정 후 2건 통과, 전체 55건 통과
+(기존 53 + 신규 2), 기존 테스트 무손상.
+
+**30·31번과의 관계 — 셋이 같은 계열이다**
+
+| 번호 | 상황 | 검증 결과 |
+|---|---|---|
+| 30 | CLAUDE.md가 옛 사본으로 교체돼 확정사항 6건 소실 | 파일은 멀쩡 |
+| 31 | 카드 재생성에서 아침 크로스체크 표시 26개 유실 | 8-2 검증 **통과** |
+| **32** | **테스트 18건이 통과하는데 코드가 틀림** | pytest **통과** |
+
+전부 **"초록불인데 틀렸다"**이다. 세 건 모두 검증 장치가 존재했고 모두
+정상 신호를 냈다. 문제는 **그 장치가 실제로 무엇을 보고 있는지 아무도
+확인하지 않았다는 것**이다.
+
+- 31번의 검증은 구조 지표만 봤다 — 셀 내용은 보지 않았다
+- 32번의 테스트는 서비스 레이어만 통과했다 — DB 제약 분기는 보지 않았다
+
+> **교훈**: **새 테스트를 쓸 때는 수정 전 코드에서 실패하는 것을 먼저
+> 확인한다.** 통과하는 테스트는 검증하지 않는 테스트일 수 있다.
+> 31번에서 얻은 *"검증을 먼저 고치고 복구한다"*와 같은 원리를 코드에
+> 적용한 것이다 — **검증 장치 자체를 먼저 검증한다.**
+>
+> 이 원칙은 이미 한 번 도구로 구현돼 있다. `tools/verify_checklist.py`의
+> `--selftest`가 9/9 유실(26개·타이틀 경보 1건)을 고정 케이스로 두어
+> **검증기 자신이 망가지면 그 자리에서 드러나게** 한 것과 같은 발상이다.
+
 ---
 
 ## 요약
@@ -1037,6 +1169,7 @@ after   1. Host-Property-Room-Bed 계층 스키마 확정(모두 optional)  ← 
 | 3. 인프라·프로세스 통제 | 29 | **9/9 엑셀 일정 재배치 중 발생** — openpyxl `ConditionalFormatting`은 내부 딕셔너리의 **키 자체**라 `sqref` 제자리 수정 시 저장이 끊겨 원본이 91,206→9,332바이트로 손상. 백업에서 복원. 기존 무결성 6항목은 **빈 파일에서도 통과**해 손상을 못 잡았고, 8-2에 백업·사본작업·5단계 검증을 추가 |
 | 3. 인프라·프로세스 통제 | 30 | **9/9 두 사본 대조 중 발견** — 9/5 커밋 `3bcedc3`이 "추가" 메시지로 CLAUDE.md 전체를 9/4 정정 이전 사본으로 교체(27+/36−). 재시도 상한과 청소 컬럼명 등 확정사항 6건이 나흘간 틀린 값으로 남아 있었다. 코드·마이그레이션 대조로 오염이 CLAUDE.md 단독임을 확정하고 git 원문으로 복원. **재발방지 규칙(8-1)을 만들 때 그 사고의 기존 피해도 함께 복구해야 한다** |
 | 3. 인프라·프로세스 통제 | 31 | **9/9 카드 재생성 중 발생·당일 발견** — 34→37 재생성이 아침 크로스체크 셀을 템플릿(전부 `☐`)으로 새로 써서 표시 26개 소멸. 병합 224·수식 61·태스크 128이 전부 통과했다 — **8-2 검증 항목이 전부 구조 지표이고 셀 내용을 보는 항목이 없다.** 같은 커밋에서 8/31 타이틀도 조용히 바뀌어 **같은 유실이 하루에 두 번**. 29번의 교훈을 적어놓고 보강한 검증에 내용 항목을 넣지 않은 것이 원인. **검증을 먼저 고치고 복구한다** |
+| 3. 인프라·프로세스 통제 | 32 | **9/10 iCal 구현 중 발견** — asyncpg 경로에서 `exc.orig`에 `constraint_name` 속성이 아예 없어 제약명 분기가 **항상 거짓**. 계층 복합FK 위반이 `INVALID_UNIT_HIERARCHY` 대신 `ResourceNotFoundError`("예약이 없다")로, CHECK 위반은 원시 `IntegrityError`(500)로 나갔다. **테스트 18건이 전부 통과하는 상태**였다 — 테스트가 전부 서비스 레이어를 거쳐 애플리케이션 검증이 DB에 닿기 전에 막았기 때문. **30·31번과 같은 "초록불인데 틀렸다" 계열** |
 
 **공통점(1~12번)**: 12건 전부가 **실제 코드를 작성하기 전, 설계 문서를
 여러 차례 교차 검증(크로스체크)하는 과정에서 발견되어 사전에
