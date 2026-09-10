@@ -53,7 +53,9 @@ class ReservationOverlapError(AppError):
     """같은 숙소 안에서 판매단위를 넘나드는 기간 충돌(409).
 
     예: 독채(PROPERTY) 예약이 잡힌 기간에 그 하위 객실(ROOM) 예약을 넣는 경우.
-    DB의 EXCLUDE 제약 3종은 **같은 단위끼리만** 막으므로 이 검사가 필요하다
+    RESERVATIONS의 EXCLUDE 제약 3종(`excl_property_overlap` /
+    `excl_room_overlap` / `excl_bed_overlap`)은 **같은 단위끼리만**
+    막으므로 이 검사가 필요하다
     (명세서 2.6.1절 경고, troubleshooting.md 1번).
     """
 

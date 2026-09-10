@@ -29,7 +29,8 @@ from app.utils.db_errors import violates_constraint
 class ChannelAlreadyConnectedError(AppError):
     """같은 숙소에 같은 채널을 두 번 연결하려 한 경우(409).
 
-    DB의 `UNIQUE(property_id, channel)` 제약과 짝을 이룬다
+    DB의 `CHANNEL_CONNECTIONS.uq_property_channel(property_id, channel)`
+    제약과 짝을 이룬다
     (api_contract.md 3절: MVP는 채널당 연결 1개).
     """
 

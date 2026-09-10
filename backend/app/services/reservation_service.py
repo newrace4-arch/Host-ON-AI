@@ -9,9 +9,11 @@
    DB CHECK는 같은 행 내부의 형태(3가지 유효 조합)만 본다.
 
 2. **PROPERTY ↔ ROOM/BED 교차 기간 충돌 검사** (troubleshooting.md 1번)
-   EXCLUDE 제약 3종은 **같은 판매단위끼리만** 겹침을 막는다. 독채(PROPERTY)
-   예약과 그 하위 객실(ROOM)/침대(BED) 예약 사이의 충돌은 DB가 잡지 못하므로
-   예약 생성 트랜잭션에서 직접 조회해 막는다.
+   RESERVATIONS의 EXCLUDE 제약 3종(`excl_property_overlap` /
+   `excl_room_overlap` / `excl_bed_overlap`)은 **같은 판매단위끼리만**
+   겹침을 막는다. 독채(PROPERTY) 예약과 그 하위 객실(ROOM)/침대(BED)
+   예약 사이의 충돌은 DB가 잡지 못하므로 예약 생성 트랜잭션에서 직접
+   조회해 막는다.
 
 두 검증 모두 "빠뜨리면 조용히 통과하는" 종류라, 예약을 만드는 경로는 반드시
 `create_reservation()`(또는 최소한 `validate_reservation_placement()`)를 거쳐야
@@ -37,7 +39,9 @@ from app.models.reservation import Reservation
 from app.schemas.reservation import ReservationCreateRequest
 from app.utils.db_errors import violates_constraint
 
-# 겹침 판정 대상 상태. EXCLUDE 제약 3종의 WHERE절과 반드시 같은 집합이어야 한다
+# 겹침 판정 대상 상태. RESERVATIONS의 EXCLUDE 제약 3종
+#   (`excl_property_overlap`/`excl_room_overlap`/`excl_bed_overlap`)의
+#   WHERE절과 반드시 같은 집합이어야 한다
 #   — 여기만 넓히거나 좁히면 앱과 DB의 판정이 어긋난다.
 ACTIVE_STATUSES = (ReservationStatus.CONFIRMED, ReservationStatus.MODIFIED)
 
@@ -139,7 +143,7 @@ def _conflict_query(
 
     기간 겹침은 반개구간 비교다(`기존.check_in < 신규.check_out` AND
     `기존.check_out > 신규.check_in`). 체크아웃일과 다음 체크인일이 같은 날인
-    연박 이어짐은 겹침이 아니다 — EXCLUDE의 `tsrange`(하한 포함/상한 제외)와
+    연박 이어짐은 겹침이 아니다 — 위 EXCLUDE 3종의 `tsrange`(하한 포함/상한 제외)와
     동일한 판정이다.
 
     단위별 충돌 규칙:
@@ -268,7 +272,9 @@ async def validate_reservation_placement(
 def _translate_integrity_error(exc: IntegrityError) -> Exception:
     """DB 제약 위반을 도메인 예외로 옮긴다(마지막 방어선).
 
-    앱 검사를 통과한 뒤에도 동시성 때문에 EXCLUDE에 걸릴 수 있고, 그때
+    앱 검사를 통과한 뒤에도 동시성 때문에 RESERVATIONS의 EXCLUDE 3종
+    (`excl_property_overlap`/`excl_room_overlap`/`excl_bed_overlap`)에
+    걸릴 수 있고, 그때
     500을 그대로 내보내면 호스트에게 원인이 전달되지 않는다.
 
     ⚠️ 제약명 판정은 반드시 `violates_constraint()`를 쓴다. asyncpg에서는
@@ -281,7 +287,12 @@ def _translate_integrity_error(exc: IntegrityError) -> Exception:
     if sqlstate == "23P01":  # exclusion_violation
         return ReservationOverlapError("같은 기간에 이미 확정된 예약이 있습니다.")
     if sqlstate == "23503":  # foreign_key_violation
-        # 계층 복합FK 위반 = 다른 숙소 소속 객실/침대/채널을 참조한 경우
+        # 계층 복합FK 위반 = 다른 숙소 소속 객실/침대/채널을 참조한 경우.
+        #   RESERVATIONS의 복합FK 3종:
+        #     fk_reservations_room_property    (room_id, property_id) -> rooms
+        #     fk_reservations_bed_room         (bed_id, room_id)     -> beds
+        #     fk_reservations_channel_property (channel_connection_id,
+        #                                       property_id) -> channel_connections
         if violates_constraint(exc, "fk_reservations_"):
             return InvalidUnitHierarchyError(
                 "지정한 객실/침대/채널이 이 숙소 소속이 아닙니다.",
