@@ -5,6 +5,10 @@
 
 가드가 세 겹이라 각각 따로 확인한다 — 하나가 무력해져도 나머지가 남는지
 보기 위함이다.
+
+**`ENV` 기본값 테스트는 여기에 두지 않는다** — `tests/test_config.py`로
+분리했다(9/10). 이 파일은 9/11 스텁 제거 때 삭제되지만 그 테스트는
+남아야 한다.
 """
 
 import pytest
@@ -33,14 +37,6 @@ def test_missing_host_id_blocks_startup():
     """개발 환경이라도 DEV_AUTH_HOST_ID가 없으면 막는다(기본값 없음)."""
     with pytest.raises(DevAuthStubMisconfigured):
         assert_auth_stub_safe(Settings(ENV="development", DEV_AUTH_HOST_ID=None))
-
-
-def test_env_defaults_to_production():
-    """**fail-safe 방향**: 환경변수를 빠뜨린 배포가 개발 환경으로 오인되면 안 된다.
-
-    이 기본값이 'development'로 바뀌면 위 가드가 통째로 무력해진다.
-    """
-    assert Settings.model_fields["ENV"].default == "production"
 
 
 def test_dev_auth_host_id_has_no_default():

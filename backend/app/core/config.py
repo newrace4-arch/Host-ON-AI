@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # 실행 환경. **기본값을 production으로 둔다(fail-safe)** — 환경변수를
     #   빠뜨린 배포는 "개발 환경"으로 오인되지 않고 그 자리에서 막힌다.
     #   로컬은 .env에 ENV=development를 둔다.
+    #   이 기본값은 tests/test_config.py가 지킨다(스텁 테스트와 분리해 둔
+    #   이유는 그 파일 상단 참고).
     ENV: str = "production"
 
     # 9/11 인증 구현 전까지 쓰는 임시 개발용 호스트 id.
@@ -52,6 +54,21 @@ class Settings(BaseSettings):
 
     @property
     def is_development(self) -> bool:
+        """실행 환경이 개발인가.
+
+        **9/11 인증 구현 후 호출자가 0이 된다** — 현재 유일한 호출자는
+        `dependencies.assert_auth_stub_safe`이고 그 함수가 스텁과 함께
+        사라진다. 그래도 존치하는 이유는 둘이다(9/10 조사 후 결정).
+
+        1. `ENV`는 `.env.example`과 배포 환경변수에 **이미 노출된 계약**이다.
+           필드를 지우면 `model_config`의 `extra="ignore"` 때문에 환경변수를
+           넣어도 **에러 없이 조용히 무시된다.**
+        2. 기본값 `production`은 fail-safe다. 지웠다 되살리면 필드·프로퍼티·
+           테스트·`.env.example` **네 곳**을 다시 건드려야 한다.
+
+        **첫 실사용처 예정 — `JWT_SECRET_KEY` 기본값 가드(10/1).** 배포인데
+        값이 `"change-me-in-production"` 그대로면 기동을 막는다.
+        """
         return self.ENV.strip().lower() == "development"
 
     @property
