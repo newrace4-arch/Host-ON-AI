@@ -64,11 +64,17 @@ export function safeRedirect(raw: string | null): string {
  *
  *   required — ProtectedRoute가 막았다(토큰 없음)
  *   expired  — 401 인터셉터가 보냈다(쓰던 중 만료)
+ *   logout   — 계정 메뉴에서 스스로 나갔다
  *   그 외    — `/login`에 직접 왔다. 안내하지 않는다
+ *
+ * `logout`을 따로 둔 이유: 스스로 나간 사람에게 "만료되었습니다"라고 하면
+ * 거짓말이고, 아무 말도 안 하면 버튼을 눌렀는데 화면만 바뀌어 "된 건가"
+ * 싶어진다. 확인만 해 주면 된다.
  */
 export function arrivalNotice(reason: string | null): string | null {
   if (reason === "expired") return "로그인이 만료되어 다시 로그인해 주세요.";
   if (reason === "required") return "로그인이 필요한 화면입니다.";
+  if (reason === "logout") return "로그아웃되었습니다.";
   return null;
 }
 

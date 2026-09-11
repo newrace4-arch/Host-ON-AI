@@ -5,6 +5,7 @@
  * (docs/ui_design.md 5-3절). 목록은 직접 부르지 않고 AppLayout이 내려준다.
  */
 
+import AccountMenu from "@/components/layout/AccountMenu";
 import PropertySwitcher from "@/components/layout/PropertySwitcher";
 import type { PropertyListState } from "@/types/ui";
 
@@ -19,8 +20,8 @@ export default function Header({
 
       <div className="flex items-center gap-4">
         <PropertySwitcher list={propertyList} />
-        {/* TODO(9/11): 로그인 구현 시 계정 메뉴(로그아웃·호스트 정보) 연결 */}
-        <span className="text-sm text-gray-500">계정</span>
+        {/* 호스트 정보 표시는 아직 없다 — AccountMenu 주석 참고. */}
+        <AccountMenu />
       </div>
     </header>
   );
