@@ -55,6 +55,23 @@ export function safeRedirect(raw: string | null): string {
   return raw;
 }
 
+/**
+ * 이 화면에 **왜** 왔는지 알린다(ui_design 1-6·4-1절).
+ *
+ * 아무 설명 없이 로그인 화면이 뜨면 앱이 고장난 것으로 보인다. 다만
+ * **세 경우를 뭉뚱그리면 안 된다** — 로그인한 적 없는 사용자에게
+ * "만료되었습니다"라고 하면 자기가 뭘 잘못했는지 찾게 된다.
+ *
+ *   required — ProtectedRoute가 막았다(토큰 없음)
+ *   expired  — 401 인터셉터가 보냈다(쓰던 중 만료)
+ *   그 외    — `/login`에 직접 왔다. 안내하지 않는다
+ */
+export function arrivalNotice(reason: string | null): string | null {
+  if (reason === "expired") return "로그인이 만료되어 다시 로그인해 주세요.";
+  if (reason === "required") return "로그인이 필요한 화면입니다.";
+  return null;
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -71,7 +88,7 @@ export default function Login() {
 
   // URL에서 바로 파생한다 — effect로 state에 복사하지 않는다.
   const redirectTo = safeRedirect(params.get("redirect"));
-  const cameFromExpiredSession = params.has("redirect");
+  const notice = arrivalNotice(params.get("reason"));
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -123,9 +140,9 @@ export default function Login() {
     >
       {/* 왜 이 화면에 왔는지 알린다 — 설명 없이 로그인 화면이 뜨면
           사용자는 앱이 고장난 것으로 받아들인다(ui_design 1-6절). */}
-      {cameFromExpiredSession && (
+      {notice && (
         <p className="mt-2 rounded bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          로그인이 만료되어 다시 로그인해 주세요.
+          {notice}
         </p>
       )}
 

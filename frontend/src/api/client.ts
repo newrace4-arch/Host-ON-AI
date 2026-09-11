@@ -35,6 +35,20 @@
  *   1. 자동 재시도는 GET만. POST·PATCH·DELETE는 하지 않는다.
  *   2. axios 껍데기만 벗기고 백엔드 봉투 { data, meta?, error }는 유지한다.
  *   3. 인증 API는 별도 인스턴스를 쓴다(401 리다이렉트·재시도 미적용).
+ *
+ * 【401 이동에 navigate를 쓰지 않는 이유 (9/11 판단)】
+ * 라우터가 붙었으므로 모듈 전역에 navigate를 심어 SPA 전환으로 바꿀 수는
+ * 있다. 그래도 `window.location.replace`를 유지한다 —
+ *
+ *   401은 **인증 상태가 깨졌다는 뜻**이고, ui_design 1-6절은 그때
+ *   "작성 중이던 입력을 보존하지 않는다"고 정했다. 전체 리로드는 그것을
+ *   **구조적으로 보장한다.** navigate로 바꾸면 이전 세션의 숙소 목록·
+ *   대시보드 데이터가 React 상태에 남아, 다른 계정으로 로그인했을 때
+ *   남의 자료가 잠깐 비칠 여지가 생긴다.
+ *
+ * 인터셉터가 React 밖이라는 것은 부차적인 이유다. 전역 navigate를 심으면
+ * 기술적으로는 가능하지만, **그렇게 해서 얻는 것이 위 보장을 잃는 값어치가
+ * 없다.**
  */
 
 import axios, {
@@ -182,10 +196,18 @@ client.interceptors.response.use(
       // 로그인 화면에서 401이 날 때마다 무한 루프가 생긴다.
       if (window.location.pathname !== "/login") {
         clearAccessToken();
-        // replace를 쓴다 — href는 하드 리로드라 상태가 초기화되고
-        // 히스토리에 만료된 경로가 남는다.
-        // TODO(9/11): 라우터가 붙으면 navigate 기반으로 교체
-        window.location.replace("/login");
+        // **보던 경로를 쿼리까지 넘긴다**(ui_design 1-6절). 9/11 이전에는
+        //   `/login`으로만 보내서, 세션이 만료된 사용자가 다시 로그인해도
+        //   항상 /dashboard로 갔다. ProtectedRoute의 buildLoginPath와
+        //   **같은 형태**를 만든다 — 두 경로가 다른 모양을 만들면
+        //   Login.tsx의 안내 문구와 복원 동작이 갈린다.
+        //   `reason=expired`로 **"쓰던 중 만료됐다"**를 구분해 넘긴다.
+        //   ProtectedRoute는 `reason=required`를 넘긴다 — 로그인한 적
+        //   없는 사용자에게 "만료되었습니다"라고 하면 거짓말이 된다.
+        const back = encodeURIComponent(
+          window.location.pathname + window.location.search,
+        );
+        window.location.replace(`/login?redirect=${back}&reason=expired`);
       }
       return Promise.reject(error);
     }
