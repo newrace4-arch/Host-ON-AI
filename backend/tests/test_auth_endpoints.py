@@ -74,7 +74,7 @@ def _run_db(work):
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """실제 앱. 라이프스팬이 돌아 인증 스텁 가드까지 그대로 거친다."""
+    """실제 앱. 라이프스팬·CORS·예외 핸들러를 그대로 거친 응답을 본다."""
     with TestClient(app) as c:
         yield c
 
