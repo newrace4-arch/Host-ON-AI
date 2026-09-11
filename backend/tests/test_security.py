@@ -171,6 +171,54 @@ def test_non_integer_sub_is_rejected():
 # ── 응답 매핑 ─────────────────────────────────────────────────────────
 
 
+def test_expired_and_invalid_share_one_message():
+    """**만료와 서명 무효가 같은 문구로 나간다**(9/11 크로스체크 09-10).
+
+    예외 타입은 나뉘어 있지만 사용자에게 가는 `message`는 하나다.
+
+    나누지 않는 이유는 두 가지다.
+
+    1. **아무도 그 구분을 읽지 않는다.** `message`는 한국어 산문이라
+       클라이언트가 문자열 매칭 말고는 파싱할 방법이 없고, 실제로 프론트는
+       이 값을 쓰지 않는다 — `client.ts`의 401 인터셉터가
+       `reason=expired`를 무조건 붙이고 `Login.tsx`가 그 쿼리로 안내를
+       정한다. 서버가 만든 구분이 **전달되지 않고 버려졌다.**
+    2. 남는 것은 **공격자에게만 보이는 신호**다. "서명은 맞는데
+       만료됐다"는 답은 비밀키가 유효하다는 사실을 알려준다.
+
+    구분은 서버 로그에만 남긴다.
+    """
+    expired = create_access_token(1, expires_delta=timedelta(minutes=-1))
+    forged = jwt.encode({"sub": "1"}, "another-key", algorithm=settings.JWT_ALGORITHM)
+
+    with pytest.raises(TokenExpiredError) as e1:
+        decode_access_token(expired)
+    with pytest.raises(TokenInvalidError) as e2:
+        decode_access_token(forged)
+
+    assert e1.value.message == e2.value.message
+    assert e1.value.to_error_body() == e2.value.to_error_body()
+
+
+def test_token_rejection_is_logged_with_the_distinction(caplog):
+    """응답에서 지운 구분을 **로그에는 남긴다.**
+
+    "만료가 몰린다"와 "위조 시도가 들어온다"는 운영 대응이 완전히 다르다.
+    통일이 "구분을 없앤다"가 아니라 "보내는 곳을 옮긴다"임을 고정한다.
+    """
+    with caplog.at_level("INFO"):
+        with pytest.raises(TokenExpiredError):
+            decode_access_token(
+                create_access_token(1, expires_delta=timedelta(minutes=-1))
+            )
+        with pytest.raises(TokenInvalidError):
+            decode_access_token("not.a.token")
+
+    messages = " / ".join(r.getMessage() for r in caplog.records)
+    assert "만료" in messages
+    assert "무효" in messages
+
+
 @pytest.mark.parametrize("error_cls", [TokenExpiredError, TokenInvalidError])
 def test_both_token_errors_map_to_401_unauthorized(error_cls):
     """만료와 서명 오류를 내부적으로는 나누되 **응답에서는 구분하지 않는다.**

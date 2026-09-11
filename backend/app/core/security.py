@@ -46,6 +46,7 @@ FastAPI의 층 구분이고, 여기서 또 하면 같은 규칙이 두 곳에 �
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from jose import ExpiredSignatureError, JWTError, jwt
@@ -53,6 +54,21 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 from app.core.exceptions import AppError
+
+logger = logging.getLogger(__name__)
+
+# 토큰을 신뢰할 수 없을 때 내보내는 **유일한 문구**.
+#
+#   만료와 서명 무효를 **응답에서 구분하지 않는다.** 9/11 크로스체크(09-10)
+#   에서 확인된 것 — `message`는 한국어 산문이라 클라이언트가 문자열 매칭
+#   말고는 읽을 방법이 없고, 실제로 프론트는 이 값을 쓰지 않는다
+#   (`client.ts`의 401 인터셉터가 `reason=expired`를 무조건 붙이고
+#   `Login.tsx`는 그 쿼리로 안내 문구를 정한다). 즉 **서버가 애써 만든
+#   구분이 사용자에게 전달되지 않고 버려지며, 로그와 공격자에게만 보였다.**
+#
+#   문구는 "다시 로그인" 쪽으로 잡는다. 사용자가 할 수 있는 행동이 그것
+#   하나뿐이라, 만료든 위조든 안내가 같아야 한다.
+_TOKEN_REJECTED_MESSAGE = "인증이 만료되었거나 유효하지 않습니다. 다시 로그인해 주세요."
 
 # ──────────────────────────────────────────────────────────────────────
 # 예외 — api_contract 1.1절 기준 **둘 다 401 UNAUTHORIZED**로 나간다
@@ -166,6 +182,11 @@ def decode_access_token(token: str) -> int:
 
     `ExpiredSignatureError`를 **먼저** 잡는다 — `JWTError`의 하위 클래스라
     순서를 바꾸면 만료가 전부 `TokenInvalidError`로 뭉개진다.
+
+    **예외 타입은 계속 나누되 `message`는 하나로 통일한다**(9/11). 구분이
+    필요한 곳은 **운영 로그**다 — "만료가 몰린다"와 "위조 시도가 들어온다"는
+    대응이 완전히 다르므로 그쪽에는 남긴다. 응답에서 나누지 않는 이유는
+    `_TOKEN_REJECTED_MESSAGE` 주석 참고.
     """
     try:
         payload = jwt.decode(
@@ -174,15 +195,21 @@ def decode_access_token(token: str) -> int:
             algorithms=[settings.JWT_ALGORITHM],
         )
     except ExpiredSignatureError as exc:
-        raise TokenExpiredError("토큰이 만료되었습니다. 다시 로그인해 주세요.") from exc
+        # 만료는 정상 운영 중에도 늘 생긴다 — info로 남긴다.
+        logger.info("토큰 거부: 만료(exp 경과)")
+        raise TokenExpiredError(_TOKEN_REJECTED_MESSAGE) from exc
     except JWTError as exc:
-        raise TokenInvalidError("유효하지 않은 토큰입니다.") from exc
+        # 서명 불일치는 위조이거나 키가 갈린 것이다. 둘 다 조사가 필요하다.
+        logger.warning("토큰 거부: 서명·형식 무효 (%s)", type(exc).__name__)
+        raise TokenInvalidError(_TOKEN_REJECTED_MESSAGE) from exc
 
     subject = payload.get("sub")
     if subject is None:
-        raise TokenInvalidError("유효하지 않은 토큰입니다.")
+        logger.warning("토큰 거부: sub 클레임 없음")
+        raise TokenInvalidError(_TOKEN_REJECTED_MESSAGE)
 
     try:
         return int(subject)
     except (TypeError, ValueError) as exc:
-        raise TokenInvalidError("유효하지 않은 토큰입니다.") from exc
+        logger.warning("토큰 거부: sub가 정수가 아님")
+        raise TokenInvalidError(_TOKEN_REJECTED_MESSAGE) from exc
