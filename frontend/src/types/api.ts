@@ -91,6 +91,34 @@ export interface components {
       size: number;
     };
 
+    /**
+     * `host` 객체 — v2.3 1.1절
+     *
+     * 3필드뿐이다. **`password_hash`는 절대 포함되지 않으며**
+     * `created_at`도 내리지 않는다(화면에서 쓰는 곳이 없다).
+     * `GET /auth/me`는 이 객체를 그대로 반환한다(1.4절).
+     */
+    Host: {
+      host_id: number;
+      email: string;
+      name: string;
+    };
+
+    /**
+     * 로그인·회원가입 공통 응답 — v2.3 1.2·1.3절
+     *
+     * 가입(201)과 로그인(200)이 **같은 구조**를 쓴다. 가입 성공 시 토큰을
+     * 함께 주므로 `/login`을 거치지 않고 다음 화면으로 간다.
+     *
+     * `token_type`은 항상 `"bearer"`지만 **프론트는 이 값을 쓰지 않는다** —
+     * `client.ts`가 `Bearer`를 하드코딩한다(1.1절).
+     */
+    TokenResponse: {
+      access_token: string;
+      token_type: string;
+      host: components["schemas"]["Host"];
+    };
+
     /** 에러 봉투 — v2.0 0절 */
     ApiError: {
       code: string;

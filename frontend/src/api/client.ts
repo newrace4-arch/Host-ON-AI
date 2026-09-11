@@ -48,14 +48,22 @@ import type { Envelope } from "@/types/api";
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 /**
- * 토큰 저장 위치는 **이 두 함수에서만** 다룬다.
- * 내일 로그인 구현 시 저장 방식을 바꾸더라도 여기만 고치면 된다.
- * (오늘은 저장하는 쪽이 없어 항상 null이다 — 인터셉터 구조만 준비)
+ * 토큰 저장 위치는 **이 세 함수에서만** 다룬다(ui_design 1-5절).
+ * 저장 방식을 바꾸더라도 여기만 고치면 된다 — 화면은 `localStorage`를
+ * 직접 만지지 않는다.
+ *
+ * `setAccessToken`은 9/11 로그인 구현 때 추가했다. 9/8에는 저장하는 쪽이
+ * 없어 읽기·삭제만 있었고, `TOKEN_KEY`가 모듈 내부 상수라 바깥에서는
+ * 저장할 방법이 아예 없었다.
  */
 const TOKEN_KEY = "hoston_access_token";
 
 export function getAccessToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setAccessToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearAccessToken(): void {

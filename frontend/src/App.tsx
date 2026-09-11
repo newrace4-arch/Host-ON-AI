@@ -17,17 +17,20 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import WakeUpGate from "@/components/WakeUpGate";
 import AppLayout from "@/components/layout/AppLayout";
 import Dashboard from "@/pages/Dashboard";
+import Login from "@/pages/Login";
 import Placeholder from "@/pages/Placeholder";
+import Signup from "@/pages/Signup";
 
 export default function App() {
   return (
     <WakeUpGate>
       <Routes>
         {/* 레이아웃 밖 — 로그인 전이거나 초기 설정 중 */}
-        {/* TODO(9/11): Placeholder → 실제 컴포넌트로 교체.
-            체크리스트상 9/9는 설계일이고 로그인 화면·API 구현은 9/11이다. */}
-        <Route path="/login" element={<Placeholder name="로그인" />} />
-        <Route path="/signup" element={<Placeholder name="회원가입" />} />
+        {/* /login·/signup은 9/11 r47에서 실제 구현됐다.
+            /onboarding은 아직 Placeholder다 — 가입 성공 시 여기로
+            보내지만(ui_design 4-2절) 화면 자체는 미구현이다. */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
         <Route path="/onboarding" element={<Placeholder name="온보딩" />} />
 
         {/* 레이아웃 안 — 운영 화면 9개.

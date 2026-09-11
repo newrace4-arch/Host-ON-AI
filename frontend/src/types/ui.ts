@@ -18,6 +18,8 @@ import type { components } from "@/types/api";
 
 /* ── 서버 계약 별칭 (api.ts 재export) ───────────────────────────── */
 
+export type Host = components["schemas"]["Host"];
+export type TokenResponse = components["schemas"]["TokenResponse"];
 export type Property = components["schemas"]["Property"];
 export type DashboardSummary = components["schemas"]["DashboardSummary"];
 export type ActionItem = components["schemas"]["ActionItem"];
