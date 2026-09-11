@@ -31,13 +31,22 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
+
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import Settings, settings
+from app.core.exceptions import UnauthorizedError
+from app.core.security import decode_access_token
 
 logger = logging.getLogger(__name__)
 
-# 9/11 인증 구현 시 False로 내리고, 이후 스텁 코드를 삭제한다.
-DEV_AUTH_STUB_ACTIVE: bool = True
+# **9/11 인증 구현 완료로 내렸다.** 아래 스텁 코드(`DevAuthStubMisconfigured`,
+#   `assert_auth_stub_safe`)는 아직 남아 있으나 이 플래그가 False라 어느
+#   경로로도 실행되지 않는다. 삭제는 별도 커밋으로 한다 — 교체가 실제로
+#   동작하는 것을 확인한 뒤 지우기 위해서다.
+DEV_AUTH_STUB_ACTIVE: bool = False
 
 
 class DevAuthStubMisconfigured(RuntimeError):
@@ -85,23 +94,51 @@ def assert_auth_stub_safe(config: Settings | None = None) -> None:
     )
 
 
-async def get_current_host_id() -> int:
-    """현재 요청의 호스트 id. **9/11에 JWT 검증으로 교체된다.**
+# `auto_error=False`가 핵심이다. 기본값(True)이면 토큰이 없을 때 FastAPI가
+#   자체 `HTTPException`을 던져 `{"detail": "Not authenticated"}`로 응답한다 —
+#   api_contract 0절 봉투가 아니라서 프론트가 에러 처리를 두 벌 만들어야 한다.
+#   끄면 토큰이 없을 때 `None`이 들어오고, 우리가 `UnauthorizedError`를 던진다.
+#
+#   `tokenUrl`은 Swagger UI의 Authorize 버튼 표시용일 뿐 실제 동작에 관여하지
+#   않는다(1.6절). `OAuth2PasswordRequestForm`은 쓰지 않지만 **헤더에서 토큰을
+#   꺼내는 쪽은 응답 형식과 무관**하므로 이것은 그대로 쓴다.
+_bearer_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
-    라우터는 이 의존성만 바라보고, 소유권 검증은 서비스 레이어의
-    `get_owned_property(db, property_id, host_id)`가 조회 조건으로
-    처리한다(부존재·타인소유 모두 404 `RESOURCE_NOT_FOUND`).
+
+async def get_current_host_id(
+    token: Annotated[str | None, Depends(_bearer_scheme)],
+) -> int:
+    """현재 요청의 호스트 id. **`Authorization: Bearer <token>`에서 온다.**
+
+    9/11 이전에는 이 함수가 `DEV_AUTH_HOST_ID` 환경변수를 읽는 스텁이었다.
+    **본문만 바뀌었고 이름과 반환 타입은 그대로다** — 라우터는 여전히
+    `Annotated[int, Depends(get_current_host_id)]` 하나만 바라보므로
+    `channels` 등 기존 엔드포인트는 한 줄도 고치지 않았다.
+
+    > `token` 파라미터는 **FastAPI가 주입**한다. 호출부가 넘기는 인자가
+    > 아니라서 의존성으로 쓰는 쪽에는 변화가 없다. 헤더를 읽으려면
+    > 주입 파라미터가 반드시 하나 필요하다.
+
+    **DB를 조회하지 않는다.** 토큰이 유효하면 그 `host_id`를 그대로
+    돌려준다. 호스트가 실제로 존재하는지는 소유권 검증이 이미 확인한다 —
+    `get_owned_property`가 `WHERE p.host_id = :host_id`로 조회하므로 삭제된
+    호스트의 토큰으로는 어떤 숙소도 잡히지 않아 404가 된다. 여기에 조회를
+    넣으면 **모든 요청에 왕복이 하나 더 붙는다.**
+    (`GET /auth/me`는 사용자 정보를 돌려주는 것이 목적이라 그쪽에서 따로
+    조회하고, 없으면 401을 낸다.)
+
+    소유권 검증 자체는 이 함수의 관심사가 아니다. 부존재·타인소유를 모두
+    404 `RESOURCE_NOT_FOUND`로 통일하는 것은 서비스 레이어가 조회 조건으로
+    처리한다(CLAUDE.md 코딩규칙 1).
+
+    :raises UnauthorizedError: 토큰 없음(401 `UNAUTHORIZED`).
+    :raises TokenExpiredError: 만료 — 같은 401 `UNAUTHORIZED`.
+    :raises TokenInvalidError: 서명 무효·형식 오류 — 같은 401 `UNAUTHORIZED`.
     """
-    if not DEV_AUTH_STUB_ACTIVE:  # pragma: no cover - 9/11 교체 시점의 안전망
-        raise NotImplementedError(
-            "인증 스텁이 꺼져 있는데 JWT 검증이 구현되지 않았습니다."
-        )
+    if not token:
+        raise UnauthorizedError("인증이 필요합니다. 로그인 후 다시 시도해 주세요.")
 
-    # 기동 가드를 통과했더라도 런타임에 한 번 더 확인한다 — 기동 이후
-    #   설정이 바뀌거나, 라이프스팬을 타지 않는 경로로 앱이 만들어질 수 있다.
-    if settings.DEV_AUTH_HOST_ID is None:
-        raise DevAuthStubMisconfigured(
-            "DEV_AUTH_HOST_ID가 설정되지 않아 요청을 처리할 수 없습니다."
-        )
-
-    return settings.DEV_AUTH_HOST_ID
+    # 만료·서명 오류는 여기서 잡지 않는다 — `security.py`가 던지는 예외가
+    #   이미 401 `UNAUTHORIZED`이고, `main.py`의 `AppError` 핸들러가 봉투로
+    #   감싼다. 셋을 응답에서 구분하지 않는 이유는 api_contract 1.1절 참고.
+    return decode_access_token(token)

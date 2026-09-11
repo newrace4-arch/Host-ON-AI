@@ -24,19 +24,14 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.exceptions import AppError
-from app.core.security import (
-    create_access_token,
-    decode_access_token,
-    hash_password,
-    verify_password,
-)
+from app.core.dependencies import get_current_host_id
+from app.core.exceptions import AppError, UnauthorizedError
+from app.core.security import create_access_token, hash_password, verify_password
 from app.models.host import Host
 from app.schemas.auth import HostResponse, LoginRequest, SignupRequest, TokenResponse
 from app.utils.db_errors import violates_constraint
@@ -73,60 +68,15 @@ class InvalidCredentialsError(AppError):
     code = "INVALID_CREDENTIALS"
 
 
-class UnauthorizedError(AppError):
-    """토큰 없음(401).
-
-    만료·서명 무효는 `core/security.py`의 `TokenExpiredError` /
-    `TokenInvalidError`가 같은 코드로 낸다. 셋 다 `UNAUTHORIZED`다.
-
-    ⚠️ **404와 섞지 않는다**(0절). 이것은 *인증 자체가 실패한* 경우이고,
-    "인증은 유효하나 그 리소스가 내 것이 아니다"는 `RESOURCE_NOT_FOUND`다.
-    권한 문제에 401을 반환하면 프론트가 세션 만료로 오인해 **토큰을 지우고
-    로그아웃시킨다** -- 남의 숙소 id를 한 번 잘못 눌렀을 뿐인데 로그인이
-    풀린다.
-    """
-
-    status_code = 401
-    code = "UNAUTHORIZED"
-
-
 # ----------------------------------------------------------------------
 # 토큰 추출 의존성
 # ----------------------------------------------------------------------
 
-# `auto_error=False`가 핵심이다. 기본값(True)이면 토큰이 없을 때 FastAPI가
-#   자체 `HTTPException`을 던져 `{"detail": "Not authenticated"}`로 응답한다 --
-#   0절 봉투가 아니라서 프론트가 에러 처리를 두 벌 만들어야 한다.
-#   끄면 토큰이 없을 때 `None`이 들어오고, 우리가 `UnauthorizedError`를 던진다.
-#
-#   `tokenUrl`은 Swagger UI의 Authorize 버튼 표시용일 뿐 실제 동작에
-#   관여하지 않는다(1.6절). 우리는 `OAuth2PasswordRequestForm`을 쓰지
-#   않지만 **헤더에서 토큰을 꺼내는 쪽은 응답 형식과 무관**하므로 그대로 쓴다.
-_bearer_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-
-
-async def get_authenticated_host_id(
-    token: Annotated[str | None, Depends(_bearer_scheme)],
-) -> int:
-    """`Authorization: Bearer <token>` 헤더를 검증해 `host_id`를 돌려준다.
-
-    토큰 없음 / 만료 / 서명 오류가 **전부 401 `UNAUTHORIZED`**로 나간다
-    (1.1절). 만료와 서명 오류의 구분은 `security.py` 안에만 있다.
-
-    ⚠️ **이 의존성의 정식 자리는 `core/dependencies.py`다.** 지금 거기에는
-    9/11 인증 구현 전까지 쓰는 `get_current_host_id` 스텁이 있고, 그 교체는
-    r47 4단계다. 교체할 때 이 함수를 그쪽으로 옮기고 여기서는 import만
-    한다 -- 그래야 `channels` 등 기존 라우터도 같은 경로로 인증된다.
-    """
-    if not token:
-        raise UnauthorizedError("인증이 필요합니다. 로그인 후 다시 시도해 주세요.")
-
-    # 만료/서명 오류는 여기서 잡지 않는다 -- security.py가 던지는 예외가
-    #   이미 401 UNAUTHORIZED이고, main.py의 AppError 핸들러가 봉투로 감싼다.
-    return decode_access_token(token)
-
-
-CurrentHostId = Annotated[int, Depends(get_authenticated_host_id)]
+# 이 의존성은 `core/dependencies.py`에 있다(r47 4단계에서 그리로 옮겼다).
+#   `channels` 등 기존 라우터가 쓰는 것과 **같은 함수**여야 인증 경로가
+#   하나로 유지된다. `UnauthorizedError`도 `core/exceptions.py`가 정식
+#   자리이며, 여기서는 `/auth/me`의 "호스트가 삭제됨" 경로에만 쓴다.
+CurrentHostId = Annotated[int, Depends(get_current_host_id)]
 
 
 # ----------------------------------------------------------------------

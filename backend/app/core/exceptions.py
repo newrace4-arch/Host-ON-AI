@@ -24,6 +24,23 @@ class AppError(Exception):
         return {"code": self.code, "message": self.message}
 
 
+class UnauthorizedError(AppError):
+    """인증 자체가 실패했다(401) — 토큰 없음·만료·서명 무효(api_contract 0절).
+
+    ⚠️ **`ResourceNotFoundError`와 섞지 않는다.** 이것은 *요청자가 누구인지
+    확인할 수 없는* 경우이고, "인증은 유효하나 그 리소스가 없거나 내 것이
+    아니다"는 404다. 권한 문제에 401을 반환하면 프론트가 **세션 만료로
+    오인해 토큰을 지우고 로그아웃시킨다** — 남의 숙소 id를 한 번 잘못
+    눌렀을 뿐인데 로그인이 풀린다(0절 "401과 404의 경계").
+
+    만료와 서명 무효는 `core/security.py`의 `TokenExpiredError` /
+    `TokenInvalidError`가 같은 코드로 낸다. 셋 다 `UNAUTHORIZED`다.
+    """
+
+    status_code = 401
+    code = "UNAUTHORIZED"
+
+
 class ResourceNotFoundError(AppError):
     """존재하지 않는 리소스 + 타인 소유 리소스를 **구분 없이** 404로 통일.
 
