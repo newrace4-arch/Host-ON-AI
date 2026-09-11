@@ -12,6 +12,7 @@
 
 import { Link } from "react-router-dom";
 
+import { useAppOutletContext } from "@/hooks/useAppOutletContext";
 import { useDashboardSummary } from "@/hooks/useDashboardSummary";
 import type { DashboardSummary, PropertyFetchState } from "@/types/ui";
 
@@ -146,7 +147,10 @@ function PropertyCard({
 /* ── 화면 ───────────────────────────────────────────────────────── */
 
 export default function Dashboard() {
-  const vm = useDashboardSummary();
+  // 숙소 목록은 **AppLayout이 이미 받아둔 것**을 쓴다. 여기서 다시 부르면
+  //   /dashboard에서만 GET /properties가 2회 나간다(9/9 이월, 9/11 해소).
+  const { propertyList } = useAppOutletContext();
+  const vm = useDashboardSummary(propertyList);
 
   if (vm.status === "loading") {
     return <div className="p-6 text-gray-600">불러오는 중…</div>;
