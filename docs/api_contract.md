@@ -1,6 +1,44 @@
-# Host ON (AI) — API Contract v2.3 (9/9 인증 스펙 확정)
+# Host ON (AI) — API Contract v2.5 (9/13 숙소 API 스펙 확정)
 
-> `docs/3rd_host_ai_db_spec_v1.md`(**v1.3**) 16개 테이블을 기준으로 작성.
+> `docs/3rd_host_ai_db_spec_v1.md`(**v1.4**) 19개 테이블을 기준으로 작성.
+> **v2.4→v2.5 변경 (9/13 숙소 API 스펙 확정 — 9/14 구현 선행 작업)**:
+> 1. **숙소 API 4종 응답·요청 스펙 신규 확정**(2.3~2.6절). 2절 표에 행만
+>    있고 스펙이 없던 넷이다 — `POST /properties` 응답, `GET`·`PATCH`
+>    `/properties/{id}`, `POST .../rooms`·`POST /rooms/{id}/beds` 요청.
+>    **필드는 전부 `PROPERTIES`·`ROOMS`·`BEDS` 실재 컬럼이며 DB 스키마
+>    변경은 없다.**
+> 2. **`accommodation_type`·`bookable_unit_type`을 수정 불가로 확정**(2.5절).
+>    전자는 한 공간에 복수 숙박업 유형을 등록할 수 없다는 법적 제약,
+>    후자는 기존 예약의 `room_id`/`bed_id` 조합이 어긋나기 때문이다.
+>    요청 본문에 담겨 오면 무시하지 않고 400으로 거부한다.
+> 3. **신규 에러 코드 6종.** `400 IMMUTABLE_FIELD`(2.5절) /
+>    `400 INVALID_ACCOMMODATION_TYPE` · `400 INVALID_UNIT_TYPE`(2.3절) /
+>    `409 ROOM_NAME_ALREADY_EXISTS` · `409 BED_LABEL_ALREADY_EXISTS` ·
+>    `400 INVALID_CAPACITY`(2.6절). 두 409는 DB의
+>    `UNIQUE(property_id, room_name)`·`UNIQUE(room_id, bed_label)`과 짝을
+>    이루며, 3절 `CHANNEL_ALREADY_CONNECTED`와 같은 계열이다.
+>    **판매단위 불일치에는 새 코드를 만들지 않고 4절의
+>    `INVALID_UNIT_HIERARCHY`를 재사용한다** — 뜻이 같아서 두 코드로
+>    나누면 프론트가 같은 상황을 두 갈래로 처리하게 된다.
+> 4. **기준 문서 표기를 `v1.4` 19개 테이블로 갱신**(3행). 신설 3개
+>    (`RESPONSE_SOURCES`·`CLEANING_TASK_PHOTOS`·`CHANNEL_FEE_RATES`)는
+>    9/13 마이그레이션 ①~⑤로 이미 적용됐다.
+> 5. `base_price`의 뜻을 응답 스펙에 명시(2.3절) — **판매단위 1개의 1박
+>    요금**이며 **0이면 미설정**이라 금액을 추정하지 않는다(db_spec 4절 6번).
+> ⚠️ **v1.4로 어긋난 나머지 절은 이 판에 포함하지 않았다** — 6절 청소사진
+>    (`photo_urls` → `CLEANING_TASK_PHOTOS`), 7절 `sources`
+>    (→ `RESPONSE_SOURCES`), 5절 정산(요율이 `CHANNEL_FEE_RATES`로 이동),
+>    3절 `UNIQUE(property_id, channel)`(→ 3컬럼). 후속 판에서 다룬다.
+> **v2.3→v2.4 변경 (9/10 3.3절 신설 — 누락분 9/13 소급 기록)**:
+> 1. `POST /channels/{connection_id}/sync` **응답 스펙 신규 확정**(3.3절).
+>    9/10에 구현한 뒤 같은 날 저녁 크로스체크에서 **3절 표 한 줄뿐이고
+>    응답 스펙이 아예 없다**는 것이 발견돼 신설했다(CLAUDE.md 9/10 규칙
+>    — 엔드포인트를 구현하기 전에 응답 스펙이 있는지 확인한다).
+> 2. ⚠️ **이 항목 자체가 9/13에 소급 기록된 것이다.** 3.3절 제목과 절 안의
+>    *"건수 필드 — 사유별로 나눈다 (v2.4)"*가 `v2.4`를 쓰고 있었으나 문서
+>    제목은 `v2.3`이었고 **변경 이력에 `v2.3→v2.4` 항목이 없었다.**
+>    한 사실이 여러 곳에 적히면 한 곳을 원본으로 삼는다는 9/4 규칙이
+>    버전 표기에도 적용된다.
 > **v2.2→v2.3 변경 (9/9 인증 설계 — 코드가 먼저 있고 설계가 나중인 역순 상황)**:
 > 1. **401과 404의 경계 명시**(0절). 그동안 "소유권 불일치와 부존재를
 >    404로 통일"만 있었고 **401을 언제 쓰는지가 없었다.** 권한 문제에
@@ -480,8 +518,10 @@ FastAPI 예제에서 흔히 쓰이지만 **우리 계약과 두 군데가 어긋
 ### 2.1 GET /properties/{property_id}/rooms 응답 스펙 (v2.1 신규 확정)
 
 > 9/8 확인 결과 2절 표에 한 행만 있고 응답 스펙이 없었다
-> (troubleshooting 23번). 9/13 객실·침대 관리 구현의 선행 작업으로
+> (troubleshooting 23번). **9/14** 객실·침대 관리 구현의 선행 작업으로
 > 확정한다. **필드는 전부 `ROOMS` 실재 컬럼이며 DB 스키마 변경은 없다.**
+> (v2.1 작성 당시에는 9/13 구현 예정이었다. `POST` 요청 스펙은 9/13에
+> 2.6절로 확정했다.)
 
 **이 엔드포인트가 의미를 갖는 조건**
 
@@ -581,9 +621,324 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 > `200 + "data": []`, 남의 객실이거나 없는 객실이면 `404`다.
 
 > **POST 요청 바디(`POST /properties/{id}/rooms`,
-> `POST /rooms/{room_id}/beds`)는 이 절에서 정의하지 않았다.** 9/13 객실·
-> 침대 관리 구현 시 확정한다. 표에 행이 있다는 것이 요청 스펙이 정의됐다는
-> 뜻은 아니다(troubleshooting 23번의 교훈).
+> `POST /rooms/{room_id}/beds`)는 이 절에서 정의하지 않는다.** **9/13
+> 확정했다 — 아래 2.6절**을 볼 것. 표에 행이 있다는 것이 요청 스펙이
+> 정의됐다는 뜻은 아니다(troubleshooting 23번의 교훈).
+
+### 2.3 POST /properties 응답 스펙 (v2.5 신규 확정)
+
+> 9/13 확인 결과 이 엔드포인트는 **요청 예시만 있고 응답 스펙이 없었다**
+> (2절 **POST /properties 요청 예시**). 2.1·2.2절이 `GET`에 대해 겪은 것과
+> 같은 상태다
+> (troubleshooting 23번). 9/14 숙소 API 구현의 선행 작업으로 확정한다.
+> **필드는 전부 `PROPERTIES` 실재 컬럼이며 DB 스키마 변경은 없다.**
+
+**상태 코드는 `201`이다** — 새 리소스를 만드는 요청이므로 `POST /auth/signup`
+(1.3절)과 같은 규약을 따른다.
+
+**반환하는 것은 목록(`GET /properties`)의 4필드가 아니라 상세와 같은 11필드**다.
+목록이 4필드인 이유는 그것이 `PropertySwitcher` 드롭다운의 **입력**이기
+때문이고(2절 **GET /properties 응답 예시**), 등록 직후에는 온보딩 위저드가
+방금 만든 숙소의
+전체 상태를 화면에 그려야 한다(`docs/ui_design.md` 4-3절). 목록 형태로
+돌려주면 클라이언트가 `GET /properties/{id}`를 곧바로 한 번 더 호출하게 된다.
+
+```json
+{
+  "data": {
+    "property_id": 3,
+    "name": "강남 3룸 독채",
+    "accommodation_type": "URBAN_HOMESTAY",
+    "bookable_unit_type": "PROPERTY",
+    "address": "서울시 강남구...",
+    "base_price": 150000,
+    "lower_bound_price": null,
+    "checkin_time": "15:00",
+    "checkout_time": "11:00",
+    "weekday_adjustment_enabled": true,
+    "holiday_adjustment_enabled": true
+  },
+  "error": null
+}
+```
+
+필드 표는 **아래 2.4절과 같다**(3.2절이 3.1절을 참조하는 것과 같은 방식).
+요청에서 생략할 수 있는 값은 DB 기본값으로 채워져 돌아온다 —
+`base_price` `0`, `checkin_time` `"15:00"`, `checkout_time` `"11:00"`,
+`weekday_adjustment_enabled`·`holiday_adjustment_enabled` `true`.
+`address`와 `lower_bound_price`는 nullable이라 `null`이다.
+
+> **`base_price`의 뜻을 여기서 못박는다**(db_spec 4절 6번). **판매단위 1개의
+> 1박 요금**이며, `bookable_unit_type`이 `PROPERTY`면 독채 1박, `ROOM`이면
+> 객실 1개 1박, `BED`면 침대 1개 1박이다.
+>
+> **`0`은 "미설정"이지 "0원"이 아니다.** DB 기본값이 `0`이라 **숙소 등록
+> 직후가 바로 이 상태**이며, 이때 예약이 들어오면 `gross_amount`·`fee_amount`를
+> 둘 다 `NULL`로 두고 생성 컬럼인 `net_amount`도 자동으로 `NULL`이 된다.
+> 금액을 추정하지 않는다는 뜻이다. 화면은 이 상태를 "요금 미설정"으로
+> 안내해야 하며, 0원 예약처럼 보여주면 안 된다(2.1절 `capacity`의
+> `null`/`0` 구분과 같은 취급).
+
+> **`weekday_adjustment_enabled`·`holiday_adjustment_enabled`는 `POST`
+> 응답에도 포함한다.** 2절의 요청 예시 바로 뒤 주석이 *"GET/PATCH 응답에도
+> 위 두 필드 반드시
+> 포함"*이라고 적은 것은 그 둘이 **요청 예시에만 있고 응답에서 빠져 있던**
+> 상황을 막기 위한 것이다. 같은 이유가 `POST` 응답에도 그대로 적용된다 —
+> 온보딩 위저드가 등록 직후 이 두 스위치의 상태를 보여줘야 하는데, 응답에
+> 없으면 클라이언트가 기본값을 **추측**하게 된다.
+
+> `host_id`는 **응답에 넣지 않는다** — JWT가 이미 소유자를 결정하므로
+> 클라이언트가 쓸 일이 없고, 내보내면 다른 호스트의 id 공간을 추론할
+> 단서가 된다. `created_at`도 넣지 않는다(2.1절과 같은 이유 — 등록 시각을
+> 쓰는 화면이 없다).
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `INVALID_ACCOMMODATION_TYPE` | `accommodation_type`이 허용값 6개가 아님(2절 요청 예시 앞의 주석) |
+| 400 | `INVALID_UNIT_TYPE` | `bookable_unit_type`이 `PROPERTY`/`ROOM`/`BED`가 아님 |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효(0절) |
+
+> `name`·`accommodation_type`·`bookable_unit_type`은 DB에서 `NOT NULL`이라
+> **요청에서도 필수**다. 누락 시 위 두 코드가 아니라 FastAPI의 요청 본문
+> 검증에 걸린다.
+
+### 2.4 GET /properties/{property_id} 응답 스펙 (v2.5 신규 확정)
+
+> 2절 표에 한 행만 있고 응답 스펙이 없었다. 9/14 구현의 선행 작업으로
+> 확정한다. **DB 스키마 변경 없음.**
+
+**목록과 상세의 차이**
+
+| | `GET /properties` (목록) | `GET /properties/{id}` (상세) |
+|---|---|---|
+| 필드 수 | **4** | **11** |
+| 용도 | `PropertySwitcher` 드롭다운·대시보드 병렬 호출의 **입력** | `/settings` 화면이 그리는 **숙소 정보 전체** |
+| 추가되는 것 | — | `address` · `base_price` · `lower_bound_price` · `checkin_time` · `checkout_time` · `weekday_adjustment_enabled` · `holiday_adjustment_enabled` |
+
+목록이 7필드를 뺀 이유는 2절 **GET /properties 응답 예시** 아래에 이미 적혀
+있다 — *"`/settings` 화면
+소관이며 드롭다운에는 쓰이지 않는다"*. 상세는 그 7개가 본체다.
+
+```json
+{
+  "data": {
+    "property_id": 1,
+    "name": "강남 3룸 독채",
+    "accommodation_type": "URBAN_HOMESTAY",
+    "bookable_unit_type": "PROPERTY",
+    "address": "서울시 강남구...",
+    "base_price": 150000,
+    "lower_bound_price": 120000,
+    "checkin_time": "15:00",
+    "checkout_time": "11:00",
+    "weekday_adjustment_enabled": true,
+    "holiday_adjustment_enabled": true
+  },
+  "error": null
+}
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `property_id` | `PROPERTIES.property_id` | 라우팅 키 |
+| `name` | `PROPERTIES.name` | |
+| `accommodation_type` | `PROPERTIES.accommodation_type` | 허용값 6개(2절 요청 예시 앞의 주석). **수정 불가**(2.5절) |
+| `bookable_unit_type` | `PROPERTIES.bookable_unit_type` | `PROPERTY`/`ROOM`/`BED`. 예약 모달의 `room_id`/`bed_id` 필수 여부를 이 값으로 분기한다. **수정 불가**(2.5절) |
+| `address` | `PROPERTIES.address` | **nullable** — 미입력 시 `null` |
+| `base_price` | `PROPERTIES.base_price` | `NOT NULL DEFAULT 0`. **판매단위 1개의 1박 요금이며 `0`은 미설정**(2.3절) |
+| `lower_bound_price` | `PROPERTIES.lower_bound_price` | **nullable** — 공백일 자동조정의 하한선(13절). 미설정이면 `null` |
+| `checkin_time` | `PROPERTIES.checkin_time` | `TIME`, `"HH:MM"` 문자열로 직렬화한다(요청 예시와 같은 형태). Action Center의 "체크인 N시간 전" 계산 기준(db_spec 2.2절) |
+| `checkout_time` | `PROPERTIES.checkout_time` | `TIME`. 청소작업 `scheduled_at`이 `check_out`과 이 값을 결합해 만들어진다(6절) |
+| `weekday_adjustment_enabled` | `PROPERTIES.weekday_adjustment_enabled` | 공백일 미세조정 on/off |
+| `holiday_adjustment_enabled` | `PROPERTIES.holiday_adjustment_enabled` | 성수기 방치감지 on/off |
+
+> `host_id`·`created_at`은 넣지 않는다(2.3절과 같은 이유).
+>
+> **객실·침대는 이 응답에 포함하지 않는다.** 판매단위가 `PROPERTY`면 애초에
+> 없고(2.1절), `ROOM`/`BED`면 `GET /properties/{id}/rooms`·
+> `GET /rooms/{id}/beds`가 따로 있다. 중첩해서 돌려주면 같은 데이터를 두
+> 경로로 주게 되어 한쪽만 갱신되는 상태가 생긴다.
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 404 | `RESOURCE_NOT_FOUND` | **타인 소유이거나 존재하지 않는 `property_id`. 둘을 구분하지 않는다**(0절 — 403 금지) |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
+
+**meta 없음** — 단건 조회다.
+
+### 2.5 PATCH /properties/{property_id} 요청·응답 스펙 (v2.5 신규 확정)
+
+> 2절 표에 한 행과 주석 한 줄(*"GET/PATCH 응답에도 위 두 필드 반드시
+> 포함할 것"*)뿐이었다. 9/14 구현의 선행 작업으로
+> 확정한다. **DB 스키마 변경 없음.**
+
+**부분 수정이므로 모든 필드가 Optional이다.** 보낸 필드만 바뀌고, 보내지
+않은 필드는 그대로 둔다. `null`을 보내는 것은 **nullable 컬럼에 한해**
+"값을 지운다"는 뜻이다(`address`·`lower_bound_price`).
+
+```json
+// Request — 체크아웃 시각과 공백일 조정만 끈다
+{
+  "checkout_time": "10:00",
+  "weekday_adjustment_enabled": false
+}
+
+// Response 200 — 갱신 후 전체 상태(2.4절과 같은 11필드)
+{
+  "data": {
+    "property_id": 1,
+    "name": "강남 3룸 독채",
+    "accommodation_type": "URBAN_HOMESTAY",
+    "bookable_unit_type": "PROPERTY",
+    "address": "서울시 강남구...",
+    "base_price": 150000,
+    "lower_bound_price": 120000,
+    "checkin_time": "15:00",
+    "checkout_time": "10:00",
+    "weekday_adjustment_enabled": false,
+    "holiday_adjustment_enabled": true
+  },
+  "error": null
+}
+```
+
+| 필드 | 수정 | 비고 |
+|---|---|---|
+| `name` | ✅ | |
+| `address` | ✅ | `null`로 지울 수 있다 |
+| `base_price` | ✅ | `0`으로 되돌리면 **다시 "미설정"**이 된다(2.3절) |
+| `lower_bound_price` | ✅ | `null`로 지울 수 있다 |
+| `checkin_time` | ✅ | `"HH:MM"` |
+| `checkout_time` | ✅ | `"HH:MM"`. **바꾸면 이후 생성되는 청소작업의 `scheduled_at`이 달라진다.** 이미 만들어진 청소작업은 소급 변경하지 않는다 |
+| `weekday_adjustment_enabled` | ✅ | 2절 주석(*"GET/PATCH 응답에도 위 두 필드 반드시 포함할 것"*)이 가리키는 둘 중 하나 |
+| `holiday_adjustment_enabled` | ✅ | 〃 |
+| `accommodation_type` | ❌ | 아래 |
+| `bookable_unit_type` | ❌ | 아래 |
+
+> **🔴 `accommodation_type`과 `bookable_unit_type`은 수정할 수 없다.**
+> 요청 본문에 담겨 오면 **무시하지 않고 `400 IMMUTABLE_FIELD`로 거부**한다 —
+> 받아서 조용히 버리면 호스트는 바뀐 줄 알고 화면을 떠난다.
+>
+> **`accommodation_type`**: 한 공간에 복수의 숙박업 유형을 등록하는 것은
+> 법적으로 불가능하며(CLAUDE.md 핵심 데이터 모델 원칙), 유형을 바꾸는 것은
+> 실무상 **재등록**에 해당한다. 10절 컴플라이언스 체크리스트 항목도 이
+> 값에서 파생되므로, 바꾸면 이미 확인한 인허가 항목이 통째로 어긋난다.
+>
+> **`bookable_unit_type`**: 바꾸면 **기존 예약의 `room_id`/`bed_id` 조합이
+> 그 자리에서 어긋난다.** 4절의 400 3종(`INVALID_UNIT_HIERARCHY` /
+> `ROOM_ID_REQUIRED` / `BED_ID_REQUIRED`)은 전부 이 값을 기준으로 판정되는데,
+> `PROPERTY` → `ROOM`으로 바꾸는 순간 과거 예약은 전부 `room_id`가 `NULL`인
+> 채로 남아 규칙 위반 상태가 된다. DB의 `CHECK(ck_reservations_unit_shape)`는
+> 조합의 **형태**만 보고 숙소의 판매단위와 대조하지 못하므로(db_spec 2.6절),
+> DB도 이 모순을 잡아주지 않는다. 겹침 방지 `EXCLUDE` 제약 3종이 단위별로
+> 갈려 있는 것도 같은 이유로 무력해진다.
+>
+> ⚠️ 이 금지는 **API 경로에 한정된다.** 서비스 레이어의 PROPERTY↔ROOM/BED
+> 교차 충돌 검사(4절 `RESERVATION_OVERLAP`)는 그대로 유지한다 — 시드
+> 데이터나 DB 직접 수정처럼 API를 거치지 않는 경로가 남아 있고, 그 검사는
+> 동시성 방어선이기도 하다.
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `IMMUTABLE_FIELD` | `accommodation_type` 또는 `bookable_unit_type`을 수정하려 함. message에 해당 필드명을 담는다 |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id`(0절) |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
+
+> **빈 본문(`{}`)은 에러가 아니다.** 바꿀 것이 없다는 뜻이므로 현재 상태를
+> 그대로 `200`으로 돌려준다.
+
+### 2.6 POST /properties/{property_id}/rooms · POST /rooms/{room_id}/beds 요청·응답 스펙 (v2.5 신규 확정)
+
+> **2.2절 말미가 "9/13 객실·침대 관리 구현 시 확정한다"고 적어 둔 그것이다.
+> 9/13에 확정했다.** 2.1·2.2절이 `GET`을 두 절로 나눈 것과 달리 `POST` 둘은
+> 요청 바디가 짧아 한 절에 묶는다. **필드는 전부 `ROOMS`·`BEDS` 실재
+> 컬럼이며 DB 스키마 변경은 없다.**
+
+**둘 다 `201`이고, 응답은 각각 2.1·2.2절 목록의 원소 하나와 같은 모양**이다.
+등록 직후 화면이 목록에 그 항목을 덧붙이기만 하면 되도록 형태를 맞췄다.
+
+**POST /properties/{property_id}/rooms**
+
+```json
+// Request
+{ "room_name": "101호", "capacity": 4 }
+
+// Response 201
+{ "data": { "room_id": 14, "room_name": "101호", "capacity": 4 }, "error": null }
+```
+
+| 필드 | 필수 | 출처 | 비고 |
+|---|---|---|---|
+| `room_name` | ✅ | `ROOMS.room_name` | `NOT NULL`. 같은 숙소 안에서 유일해야 한다(`UNIQUE(property_id, room_name)`) |
+| `capacity` | — | `ROOMS.capacity` | **nullable**. 생략하면 `null`(= 미입력)이며 **`0`이 아니다**(2.1절) |
+
+**POST /rooms/{room_id}/beds**
+
+```json
+// Request
+{ "bed_label": "A" }
+
+// Response 201
+{ "data": { "bed_id": 103, "bed_label": "A" }, "error": null }
+```
+
+| 필드 | 필수 | 출처 | 비고 |
+|---|---|---|---|
+| `bed_label` | ✅ | `BEDS.bed_label` | `NOT NULL`. 같은 객실 안에서 유일해야 한다(`UNIQUE(room_id, bed_label)`) |
+
+> `property_id`·`room_id`·`created_at`은 **응답에 넣지 않는다** — 앞의 둘은
+> 경로에 이미 있고, `created_at`은 쓰는 화면이 없다(2.1·2.2절과 같은 규칙).
+
+**판매단위와 맞지 않는 생성은 거부한다**
+
+2.1절은 `bookable_unit_type=PROPERTY`인 숙소에서 **객실 목록이 빈 배열인
+것이 정상**이라고 정했다. 그 짝으로, **그런 숙소에 객실을 만드는 요청은
+거부한다.** 빈 배열이 "아직 안 만든 상태"가 아니라 "그 숙소에 객실 개념이
+없는 상태"이기 때문이다 — 만들 수 있게 두면 조회는 계속 빈 배열을
+기대하는데 DB에는 행이 쌓이는 어긋남이 생긴다.
+
+| 숙소의 `bookable_unit_type` | `POST .../rooms` | `POST .../beds` |
+|---|---|---|
+| `PROPERTY` | **400** `INVALID_UNIT_HIERARCHY` | **400** `INVALID_UNIT_HIERARCHY` |
+| `ROOM` | ✅ | **400** `INVALID_UNIT_HIERARCHY` — 객실을 침대로 나누어 팔지 않는다(2.2절) |
+| `BED` | ✅ | ✅ |
+
+> 4절이 예약 생성에서 쓰는 것과 **같은 코드를 재사용한다.** 뜻이 같기
+> 때문이다 — *"판매단위와 계층이 어긋났다"*. 새 코드를 만들면 프론트가 같은
+> 상황을 두 코드로 처리하게 된다.
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `INVALID_UNIT_HIERARCHY` | 위 표의 판매단위 불일치 |
+| 400 | `INVALID_CAPACITY` | `capacity`가 `0` 이하. **`null`은 정상이다**(미입력) — 2.1절이 `null`과 `0`을 구분한 것과 짝을 이룬다 |
+| 409 | `ROOM_NAME_ALREADY_EXISTS` | 같은 숙소에 같은 `room_name`(`UNIQUE(property_id, room_name)`) |
+| 409 | `BED_LABEL_ALREADY_EXISTS` | 같은 객실에 같은 `bed_label`(`UNIQUE(room_id, bed_label)`) |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` / `room_id`(0절) |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
+
+> 두 409는 3절 `CHANNEL_ALREADY_CONNECTED`와 같은 계열이다 — **DB의 UNIQUE
+> 제약과 짝을 이루는 도메인 에러**이며, 서비스 레이어가 `IntegrityError`를
+> 제약 이름으로 판정해 번역한다. 선조회로 미리 막지 않는 이유는 그 사이
+> 다른 요청이 끼어들 수 있어서다(TOCTOU).
+
+**소유권 검증** — `POST /rooms/{room_id}/beds`에는 `property_id`가 없다.
+0절 규칙에 따라 2.2절과 같은 조인으로 검증한다.
+
+```sql
+SELECT r.* FROM rooms r
+JOIN properties p ON r.property_id = p.property_id
+WHERE r.room_id = :room_id AND p.host_id = :current_host_id
+```
+
+> 결과가 없으면 부존재와 타인 소유를 구분하지 않고 `404`다.
 
 ---
 
