@@ -1,13 +1,23 @@
-# Host ON (AI) — ERD (v1.3 최신 반영)
+# Host ON (AI) — ERD (v1.4 최신 반영)
 
 > DB 명세서(`3rd_host_ai_db_spec_v1.md`) 변경 시 이 파일도 함께 갱신할 것.
-> 마지막 동기화: **v1.3** (9/4 1단계 검증 반영 — INQUIRIES nullable+단독FK,
-> last_error_message / photo_urls 신규 컬럼, ACTION_ITEMS 복합FK)
+> 마지막 동기화: **v1.4** (9/13 마이그레이션 ①~⑤ 반영 — 테이블 16→19.
+> RESPONSE_SOURCES·CLEANING_TASK_PHOTOS·CHANNEL_FEE_RATES 신설,
+> CHANNEL_CONNECTIONS.room_id 추가, RESERVATIONS.net_amount 생성컬럼 전환,
+> FINANCIAL_CONFIGS에서 요율 3개 이동 + base_nightly_rate 제거)
 >
-> ⚠️ **2절(물리적 스키마)은 요약본이 아니라 DDL 전수 반영본이다.** 9/4 검증에서
-> 컬럼 25개가 누락돼 있던 것을 보충했으므로, 앞으로 명세서에 컬럼을 추가할 때
-> 여기도 반드시 같이 추가한다(빠뜨리면 다음 검증에서 또 걸린다).
-> 단, `created_at`은 전 테이블 공통이라 ERD에서는 생략한다.
+> 🔴 **2절(물리적 스키마)은 수기로 갱신하지 않는다(9/13 확정).** 마이그레이션
+> 적용 후 **DB에서 자동 생성**하기로 했다(강사님 4차 미팅 권고, CLAUDE.md
+> "DB 변경 순서" 참고). **2절이 1·3절보다 낡아 보여도 손으로 고치지 마라** —
+> 자동 생성분으로 통째로 교체되므로 그 작업이 버려진다. 1절(논리)은 한글
+> 개념 모델이라 DB에서 뽑을 수 없어 계속 수기로 유지한다.
+>
+> ⚠️ **2절은 요약본이 아니라 DDL 전수 반영본이다** — 9/4 검증에서 컬럼 25개가
+> 누락돼 있던 것을 보충했다. 그 성격은 그대로이나, **"명세서에 컬럼을 추가할
+> 때 여기도 같이 추가한다"는 옛 절차는 위 자동 생성 결정으로 대체됐다**
+> (9/13). 이제 컬럼 누락은 손으로 막는 것이 아니라 DB에서 뽑아 막는다.
+> 단, `created_at`은 전 테이블 공통이라 ERD에서는 생략한다(자동 생성기를
+> 만들 때 이 생략 규칙을 유지할지 함께 정한다).
 >
 > Notion에 붙여넣을 때는 각 코드블록에서 ```mermaid 와 ``` 줄은 빼고
 > erDiagram 부터 시작하는 내용만 넣을 것.
@@ -27,13 +37,18 @@ erDiagram
   객실 ||--o{ 예약 : 예약단위
   침대 ||--o{ 예약 : 예약단위
   채널연동 ||--o{ 예약 : 동기화
-  숙소 ||--|| 정산설정 : 설정
+  객실 |o--o{ 채널연동 : "객실별 피드(v1.4 - 독채는 비움)"
+  숙소 ||--o| 정산설정 : "설정(VAT표시 - 행이 없을 수 있음)"
+  숙소 ||--o{ 채널요율 : "채널별 수수료율(v1.4)"
   숙소 ||--o{ 월별정산 : 요약
   예약 ||--o| 청소작업 : 생성
+  청소작업 ||--o{ 청소사진 : "완료사진(v1.4)"
   예약 |o--o{ 문의 : "연결(선택 - 예약전 사전문의 허용)"
   문의 ||--|| 문의분류 : 분류됨
   문의 ||--o{ 문의응답 : 응답됨
   문의응답 ||--o{ 응답승인 : 요구
+  문의응답 ||--o{ 응답근거 : "인용(v1.4)"
+  지식청크 ||--o{ 응답근거 : "인용됨(v1.4)"
   숙소 ||--o{ 지식청크 : 보유
   숙소 ||--o{ 액션아이템 : 발생
   숙소 ||--o{ 체크리스트항목 : 요구
@@ -72,6 +87,7 @@ erDiagram
   채널연동 {
     코드 연동아이디 PK
     코드 숙소아이디 FK
+    코드 객실아이디 FK "v1.4 - 비우면 숙소 전체 피드(독채), 채우면 그 객실 피드(호스텔)"
     목록 채널구분
     텍스트 아이칼주소
     목록 동기화상태
@@ -91,17 +107,23 @@ erDiagram
     목록 예약상태
     목록 환불상태
     목록 정산상태
-    숫자 총금액
-    숫자 수수료
-    숫자 실정산액
+    숫자 총금액 "숙소 기본가 x 박수"
+    숫자 수수료 "총금액 x 채널요율 - 예약시점 스냅샷"
+    숫자 실정산액 "v1.4 - 총금액에서 수수료를 뺀 값을 DB가 자동계산"
     논리 호스트확인필요여부
   }
   정산설정 {
     코드 설정아이디 PK
     코드 숙소아이디 FK
+    논리 VAT포함여부 "v1.4 - 표시 전용, 계산에 쓰지 않음"
+  }
+  채널요율 {
+    코드 요율아이디 PK
+    코드 숙소아이디 FK "v1.4 - 채널연동이 아니라 숙소에 건다(연결을 지워도 남는다)"
+    목록 채널구분
     목록 수수료구분
-    숫자 수수료율
-    숫자 기본단가
+    숫자 수수료율 "0~1 비율 - 15.5%는 0.1550이지 15.5가 아니다"
+    텍스트 요율출처 "기본값은 호스트가 확인하지 않은 시스템 기본값을 뜻함"
   }
   월별정산 {
     코드 정산아이디 PK
@@ -119,6 +141,12 @@ erDiagram
     목록 청소상태
     텍스트 청소담당자
     논리 비품부족여부
+  }
+  청소사진 {
+    코드 사진아이디 PK
+    코드 작업아이디 FK
+    텍스트 사진주소 "v1.4 - 파일이 아니라 주소만 보관, 저장처 미정"
+    숫자 표시순서
   }
   문의 {
     코드 문의아이디 PK
@@ -146,6 +174,12 @@ erDiagram
     코드 응답아이디 FK
     목록 승인상태
     코드 승인자
+  }
+  응답근거 {
+    코드 응답아이디 PK "v1.4 - 이 표만 대리키 없이 두 값이 함께 식별자"
+    코드 청크아이디 PK
+    코드 숙소아이디 FK "응답과 청크가 같은 숙소임을 복합FK 둘이 함께 보장"
+    숫자 인용순위 "검색 결과 순위 - 1이 가장 유사"
   }
   지식청크 {
     코드 청크아이디 PK
@@ -357,16 +391,24 @@ erDiagram
 
 ## 3. RESERVATIONS 중심 확대본 (예약↔청소↔문의↔정산)
 
+> **[v1.4] 신설 3개 중 둘만 넣었다.** `CLEANING_TASK_PHOTOS`는 예약→청소
+> 사슬에, `RESPONSE_SOURCES`는 예약→문의 사슬에 붙으므로 이 확대본의
+> 주제 안이다. **`CHANNEL_FEE_RATES`는 넣지 않았다** — 숙소×채널에 걸린
+> 표라 예약과 직접 관계가 없고, 이 확대본에는 애초에
+> `CHANNEL_CONNECTIONS`도 없다. 전체 그림은 1·2절을 본다.
+
 ```mermaid
 erDiagram
   PROPERTIES ||--o{ RESERVATIONS : "숙소가 예약 접수"
   RESERVATIONS ||--o| CLEANING_TASKS : "예약확정시 선제생성(1:1, UNIQUE)"
+  CLEANING_TASKS ||--o{ CLEANING_TASK_PHOTOS : "완료사진(v1.4 - JSONB배열에서 행으로)"
   PROPERTIES ||--o{ INQUIRIES : "숙소 단위 문의 귀속(단독FK)"
   RESERVATIONS |o--o{ INQUIRIES : "게스트 문의 발생(예약연결은 선택)"
   INQUIRIES ||--|| INQUIRY_CLASSIFICATIONS : "AI 1회호출로 분류"
   INQUIRIES ||--o{ INQUIRY_RESPONSES : "응답(1:N+최신플래그)"
   INQUIRY_RESPONSES ||--o{ INQUIRY_APPROVALS : "고위험시 승인요청"
-  PROPERTIES ||--|| FINANCIAL_CONFIGS : "숙소별 수수료설정"
+  INQUIRY_RESPONSES ||--o{ RESPONSE_SOURCES : "인용근거(v1.4 - JSONB배열에서 행으로)"
+  PROPERTIES ||--o| FINANCIAL_CONFIGS : "숙소별 설정(v1.4 - VAT표시만 남음)"
   PROPERTIES ||--o{ MONTHLY_SETTLEMENTS : "월별 정산 스냅샷"
   RESERVATIONS ||--o{ ACTION_ITEMS : "규칙기반 알림 생성"
   CLEANING_TASKS ||--o{ ACTION_ITEMS : "청소지연시 알림"
@@ -386,14 +428,21 @@ erDiagram
     enum reservation_status "PENDING·CONFIRMED·MODIFIED·CANCELLED·COMPLETED (MODIFIED는 EXCLUDE 조건절에도 포함)"
     enum refund_status "NONE·PARTIAL·FULL - 상태와 분리"
     enum financial_status "ESTIMATED·CONFIRMED·MANUALLY_ADJUSTED"
-    integer gross_amount "iCal 기반 추정치"
+    integer gross_amount "properties.base_price x 박수 - 0이면 미설정이라 NULL"
+    integer fee_amount "gross x channel_fee_rates.commission_rate - 예약시점 스냅샷"
+    integer net_amount "v1.4: GENERATED ALWAYS AS (gross_amount - fee_amount) STORED"
   }
   CLEANING_TASKS {
     bigserial task_id PK
     bigint reservation_id FK "UNIQUE, 예약당 1건"
     enum task_status "PENDING~COMPLETED·VERIFIED 둘다 완료취급"
     boolean amenity_shortage
-    jsonb photo_urls "완료사진 누적(append, v1.3)"
+  }
+  CLEANING_TASK_PHOTOS {
+    bigserial photo_id PK "v1.4 신규 - 사진 1장 삭제가 DELETE 한 줄이 된다"
+    bigint task_id FK
+    text photo_url
+    integer sort_order "화면 표시 순서"
   }
   INQUIRIES {
     bigserial inquiry_id PK
@@ -408,8 +457,15 @@ erDiagram
   }
   INQUIRY_RESPONSES {
     bigserial response_id PK
-    bigint inquiry_id FK
+    bigint inquiry_id FK "v1.4: (inquiry_id, property_id) 복합FK로 교체"
+    bigint property_id FK "v1.4 신규 - 서버가 INQUIRIES에서 복사해 채운다"
     boolean is_latest "재시도 대응용 부분UNIQUE"
+  }
+  RESPONSE_SOURCES {
+    bigint response_id PK "v1.4 신규 - 이 표만 복합PK(대리키 없음)"
+    bigint chunk_id PK "KNOWLEDGE_CHUNKS 참조 - 이 확대본 범위 밖"
+    bigint property_id FK "복합FK 2개가 응답과 청크의 숙소 일치를 함께 보장"
+    smallint rank "검색 순위 - 1이 가장 유사"
   }
   INQUIRY_APPROVALS {
     bigserial approval_id PK
@@ -419,12 +475,12 @@ erDiagram
   FINANCIAL_CONFIGS {
     bigserial config_id PK
     bigint property_id FK
-    numeric commission_rate "기본 0.155"
+    boolean vat_included "v1.4: 요율 3개는 CHANNEL_FEE_RATES로 이동, 표시 전용만 남음"
   }
   MONTHLY_SETTLEMENTS {
     bigserial settlement_id PK
     bigint property_id FK
-    numeric applied_commission_rate "정산당시 값 스냅샷 - Config와 직접FK 없음"
+    numeric applied_commission_rate "정산당시 값 스냅샷 - v1.4: 원본이 CHANNEL_FEE_RATES로 옮겨갔고 직접FK는 여전히 없음"
   }
   ACTION_ITEMS {
     bigserial action_id PK
