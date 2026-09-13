@@ -355,10 +355,12 @@ async def test_existing_null_room_id_rows_survived_migration(
 # 확정하면서 선행 조건이 풀렸다(CLAUDE.md 9/10 규칙 — 엔드포인트를 구현하기
 # 전에 응답 스펙이 있는지 확인한다).
 #
-# **세 가지를 전부 400 INVALID_UNIT_HIERARCHY로 거부한다** — 다른 숙소의 객실 /
-# 없는 객실 / 독채에 room_id 지정. DB 복합 FK에 맡기지 않고 서비스 레이어가
-# 미리 막는 이유는 `_validate_room_for_channel` 도크스트링과
-# `create_channel`의 주석 참고.
+# **404와 400을 나눈다**(크로스체크 13-3 반영). 없는 객실·다른 숙소의 객실은
+# **404 RESOURCE_NOT_FOUND**이고, 내 숙소의 실재하는 객실인데 판매단위가
+# PROPERTY인 경우만 **400 INVALID_UNIT_HIERARCHY**다. 앞의 둘을 400으로
+# 돌려주면 **id의 존재 여부가 새어 나간다**(0절이 403을 금지한 것과 같은 이유).
+# DB 복합 FK에 맡기지 않고 서비스 레이어가 미리 막는 이유는
+# `_validate_room_for_channel` 도크스트링과 `create_channel`의 주석 참고.
 
 
 async def test_room_id_is_optional(db: AsyncSession, host: Host, make_property):
@@ -406,14 +408,16 @@ async def test_room_id_accepted_for_room_unit_property(
     assert ChannelConnectionResponse.from_model(conn).room_id == room.room_id
 
 
-async def test_room_id_of_other_property_is_400(
+async def test_room_id_of_other_property_is_404(
     db: AsyncSession, host: Host, make_property
 ):
-    """다른 숙소의 객실 → 400. **404가 아니다.**
+    """다른 숙소의 객실 → **404**. 400이 아니다.
 
-    `property_id`는 경로에 있고 이미 소유권이 검증된 상태라, 문제는
-    "남의 리소스"가 아니라 **요청 본문이 그 숙소의 계층과 맞지 않는 것**이다
-    (api_contract 3.2절). 0절의 404 통일 규칙은 경로의 리소스에 적용된다.
+    🔴 **400으로 돌려주면 존재 정보가 샌다.** 경로의 `{property_id}`는
+    부존재와 타인 소유를 구분하지 않고 404로 막는데(0절), 본문의
+    `room_id`만 400을 주면 **"그 id는 존재하되 내 것이 아니거나 아예
+    없다"까지 좁혀진다.** 아래 `test_nonexistent_room_id_is_404`와
+    **응답이 같아야 한다** — 두 테스트가 한 쌍으로 그 사실을 고정한다.
     """
     prop_a, _ = await make_property(BookableUnitType.ROOM)
     prop_b, _ = await make_property(BookableUnitType.ROOM)
@@ -422,7 +426,7 @@ async def test_room_id_of_other_property_is_400(
     )
     await db.commit()
 
-    with pytest.raises(InvalidUnitHierarchyError) as exc:
+    with pytest.raises(ResourceNotFoundError) as exc:
         await channel_service.create_channel(
             db,
             property_id=prop_a.property_id,
@@ -434,18 +438,23 @@ async def test_room_id_of_other_property_is_400(
             ),
         )
 
-    assert exc.value.status_code == 400
-    assert exc.value.code == "INVALID_UNIT_HIERARCHY"
+    assert exc.value.status_code == 404
+    assert exc.value.code == "RESOURCE_NOT_FOUND"
 
 
-async def test_nonexistent_room_id_is_400(
+async def test_nonexistent_room_id_is_404(
     db: AsyncSession, host: Host, make_property
 ):
-    """없는 객실 → 같은 400이다. **남의 객실과 구분하지 않는다.**"""
+    """없는 객실 → **404**. 위 `test_room_id_of_other_property_is_404`와
+
+    **응답이 완전히 같아야 한다.** 두 경우를 구분하는 순간 id의 존재
+    여부가 새어 나간다. 한 쿼리(`WHERE room_id = ? AND property_id = ?`)로
+    둘을 함께 판정하므로 구조적으로 구분할 수 없다.
+    """
     prop, _ = await make_property(BookableUnitType.ROOM)
     await db.commit()
 
-    with pytest.raises(InvalidUnitHierarchyError) as exc:
+    with pytest.raises(ResourceNotFoundError) as exc:
         await channel_service.create_channel(
             db,
             property_id=prop.property_id,
@@ -455,19 +464,28 @@ async def test_nonexistent_room_id_is_400(
             ),
         )
 
-    assert exc.value.code == "INVALID_UNIT_HIERARCHY"
+    assert exc.value.status_code == 404
+    assert exc.value.code == "RESOURCE_NOT_FOUND"
 
 
 async def test_room_id_on_property_unit_is_400(
     db: AsyncSession, host: Host, make_property
 ):
-    """독채에 `room_id` 지정 → 400. **DB는 이것을 막지 못한다.**
+    """독채에 **자기 숙소의 실재하는 객실**을 지정 → 400. **DB는 못 막는다.**
 
     `bookable_unit_type`은 `PROPERTIES`에 있어 `channel_connections`의 제약으로
     볼 수 없다. 서비스 레이어가 없으면 그대로 저장되고, 화면이 그 `room_id`로
     객실명을 찾다가 실패한다(그 숙소의 `GET .../rooms`는 빈 배열이 정상이다).
+
+    ⚠️ **객실을 실제로 만들어 두고 시험한다.** `room_id=1` 같은 임의의 값을
+    쓰면 존재·소속 검사에서 **404로 먼저 걸려** 이 400 분기에 도달하지
+    못한다. 400은 *내 숙소의 실재하는 객실*일 때만 나온다 — 그래야 응답이
+    요청자가 이미 아는 정보만으로 판정되고 새어 나가는 것이 없다.
+    (DB는 판매단위와 무관하게 `ROOMS` 행을 허용하므로 이 상태가 만들어진다.)
     """
     prop, _ = await make_property(BookableUnitType.PROPERTY)
+    room = Room(property_id=prop.property_id, room_name="독채인데 만든 객실")
+    db.add(room)
     await db.commit()
 
     with pytest.raises(InvalidUnitHierarchyError) as exc:
@@ -476,10 +494,13 @@ async def test_room_id_on_property_unit_is_400(
             property_id=prop.property_id,
             host_id=host.host_id,
             payload=ChannelConnectionCreateRequest(
-                channel=Channel.BOOKING_COM, ical_url=REAL_URL, room_id=1
+                channel=Channel.BOOKING_COM,
+                ical_url=REAL_URL,
+                room_id=room.room_id,
             ),
         )
 
+    assert exc.value.status_code == 400
     assert exc.value.code == "INVALID_UNIT_HIERARCHY"
 
 

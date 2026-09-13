@@ -96,9 +96,26 @@ async def _validate_room_for_channel(
 ) -> None:
     """[v1.4] 채널 연결의 `room_id`가 이 숙소의 계층과 맞는지 검증한다.
 
-    api_contract 3.2절이 정한 세 가지를 **전부 400
-    `INVALID_UNIT_HIERARCHY`로 거부**한다 — 다른 숙소의 객실 / 존재하지
-    않는 객실 / 독채(`PROPERTY`)에 `room_id` 지정.
+    **404와 400을 나눈다**(api_contract 3.2절).
+
+    | 경우 | 응답 |
+    |---|---|
+    | 존재하지 않는 `room_id` | **404** `RESOURCE_NOT_FOUND` |
+    | 다른 숙소의 `room_id` | **404** `RESOURCE_NOT_FOUND` |
+    | 내 숙소의 실재하는 객실인데 판매단위가 `PROPERTY` | **400** `INVALID_UNIT_HIERARCHY` |
+
+    🔴 **앞의 둘을 400으로 돌려주면 존재 정보가 샌다.** 경로의
+    `{property_id}`는 부존재와 타인 소유를 구분하지 않고 404로 막는데
+    (0절), 본문의 `room_id`만 400을 주면 **"그 id는 존재하되 내 것이
+    아니거나, 아예 없다"까지 좁혀진다.** id를 1씩 올려가며 응답 코드를
+    비교하면 남의 객실 id 공간을 추론할 수 있다 — 0절이 403을 금지한
+    것과 같은 이유다. 그래서 **한 쿼리로 `room_id`와 `property_id`를
+    함께 조회해 없으면 404**를 던지고, 두 경우를 구분하지 않는다.
+
+    **세 번째만 400인 이유**: 그 응답은 **요청자가 이미 아는 정보만으로
+    판정된다.** 자기 숙소의 판매단위와 자기 객실의 존재는 이미 알고 있고,
+    이 400은 새로운 사실을 알려주지 않는다. 고칠 방법도 명확하다 —
+    `room_id`를 빼면 된다.
 
     🔴 **`reservation_service.validate_unit_hierarchy`를 재사용하면 안 된다.**
     이름이 비슷하고 에러 코드도 같아 **합치고 싶어지는 자리**지만 뜻이
@@ -113,26 +130,20 @@ async def _validate_room_for_channel(
     `ROOM_ID_REQUIRED`로 거부된다.** 예약은 어느 객실을 파는지가 반드시
     정해져야 하지만, iCal 피드는 숙소 단위로 하나만 걸 수도 있다.
 
-    **남의 객실과 없는 객실을 구분하지 않는다** — api_contract가 둘을 같은
-    코드로 묶었고(0절 정보노출 원칙과 같은 취지), 조회 한 번으로 소유와
-    소속을 함께 본다.
+    **남의 객실과 없는 객실을 구분하지 않는다** — 조회 한 번으로 존재와
+    소속을 함께 보고, 둘 다 같은 404를 던진다.
     """
     if room_id is None:
         # 모든 판매단위에서 정상이다. 독채는 항상 이 경로이고,
         #   ROOM/BED 숙소도 '숙소 전체 피드'를 등록할 수 있다.
         return
 
-    if prop.bookable_unit_type is BookableUnitType.PROPERTY:
-        raise InvalidUnitHierarchyError(
-            "이 숙소는 전체(PROPERTY) 단위로 판매합니다. "
-            "객실별 피드를 등록할 수 없습니다.",
-            code="INVALID_UNIT_HIERARCHY",
-        )
-
-    # 소유(host_id)는 위 get_owned_property가 이미 확인했으므로, 여기서는
-    #   '그 객실이 이 숙소 소속인가'만 본다. DB의 복합 FK
+    # ① 존재·소속을 **한 쿼리로** 본다. 소유(host_id)는 위
+    #   get_owned_property가 이미 확인했으므로 여기서는 '그 객실이 이 숙소
+    #   소속인가'만 보면 된다. DB의 복합 FK
     #   fk_channel_connections_room_property와 같은 조건이며, 그것은
     #   동시성 대비 마지막 방어선으로 남는다.
+    #   **없으면 404다** — 부존재와 타인 숙소를 구분하지 않는다(위 도크스트링).
     room = await db.scalar(
         select(Room).where(
             Room.room_id == room_id,
@@ -140,8 +151,16 @@ async def _validate_room_for_channel(
         )
     )
     if room is None:
+        raise ResourceNotFoundError("요청한 객실을 찾을 수 없습니다.")
+
+    # ② 여기까지 왔으면 **내 숙소의 실재하는 객실**이다. 그런데 판매단위가
+    #   PROPERTY면 그 숙소에는 객실 개념이 없어(GET .../rooms가 빈 배열인
+    #   것이 정상 — 2.1절) 객실별 피드를 걸 수 없다. 이 400은 요청자가
+    #   이미 아는 정보만으로 판정되므로 새어 나가는 것이 없다.
+    if prop.bookable_unit_type is BookableUnitType.PROPERTY:
         raise InvalidUnitHierarchyError(
-            "지정한 객실이 이 숙소 소속이 아닙니다.",
+            "이 숙소는 전체(PROPERTY) 단위로 판매합니다. "
+            "객실별 피드를 등록할 수 없습니다.",
             code="INVALID_UNIT_HIERARCHY",
         )
 

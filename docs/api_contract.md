@@ -11,15 +11,21 @@
 >    전자는 한 공간에 복수 숙박업 유형을 등록할 수 없다는 법적 제약,
 >    후자는 기존 예약의 `room_id`/`bed_id` 조합이 어긋나기 때문이다.
 >    요청 본문에 담겨 오면 무시하지 않고 400으로 거부한다.
-> 3. **신규 에러 코드 6종.** `400 IMMUTABLE_FIELD`(2.5절) /
->    `400 INVALID_ACCOMMODATION_TYPE` · `400 INVALID_UNIT_TYPE`(2.3절) /
->    `409 ROOM_NAME_ALREADY_EXISTS` · `409 BED_LABEL_ALREADY_EXISTS` ·
->    `400 INVALID_CAPACITY`(2.6절). 두 409는 DB의
->    `UNIQUE(property_id, room_name)`·`UNIQUE(room_id, bed_label)`과 짝을
->    이루며, 3절 `CHANNEL_ALREADY_CONNECTED`와 같은 계열이다.
->    **판매단위 불일치에는 새 코드를 만들지 않고 4절의
->    `INVALID_UNIT_HIERARCHY`를 재사용한다** — 뜻이 같아서 두 코드로
->    나누면 프론트가 같은 상황을 두 갈래로 처리하게 된다.
+> 3. **신규 에러 코드 3종.** `400 IMMUTABLE_FIELD`(2.5절) /
+>    `409 ROOM_NAME_ALREADY_EXISTS` · `409 BED_LABEL_ALREADY_EXISTS`(2.6절).
+>    두 409는 DB의 `UNIQUE(property_id, room_name)`·
+>    `UNIQUE(room_id, bed_label)`과 짝을 이루며, 3절
+>    `CHANNEL_ALREADY_CONNECTED`와 같은 계열이다. `IMMUTABLE_FIELD`는
+>    *"형식은 맞는데 바꿀 수 없다"*라 처리가 다르다 — 프론트가 그 입력을
+>    **비활성화**한다.
+>    - **새 코드를 만들지 않은 것 둘.** 판매단위 불일치는 4절의
+>      `INVALID_UNIT_HIERARCHY`를 재사용한다(뜻이 같아서 나누면 프론트가
+>      같은 상황을 두 갈래로 처리하게 된다). **단순 값 규격 위반은
+>      `VALIDATION_ERROR` 하나로 받는다** — 초안에 있던
+>      `INVALID_ACCOMMODATION_TYPE`·`INVALID_UNIT_TYPE`·`INVALID_CAPACITY`
+>      셋은 **철회했다**(9/13 크로스체크). 전부 *"필드 값이 규격에 안
+>      맞는다"*라 프론트가 코드로 분기할 이유가 없고, **어느 필드가 왜
+>      틀렸는지는 `message`가 알려준다.**
 > 4. **기준 문서 표기를 `v1.4` 19개 테이블로 갱신**(3행). 신설 3개
 >    (`RESPONSE_SOURCES`·`CLEANING_TASK_PHOTOS`·`CHANNEL_FEE_RATES`)는
 >    9/13 마이그레이션 ①~⑤로 이미 적용됐다.
@@ -697,6 +703,18 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 ```
 
 필드 표는 **아래 2.4절과 같다**(3.2절이 3.1절을 참조하는 것과 같은 방식).
+
+> 🔴 **목록(`GET /properties`)과 필드 수가 다르다 — 프론트가 한 타입으로
+> 묶으면 깨진다.** 목록은 **4필드**(`property_id`·`name`·
+> `accommodation_type`·`bookable_unit_type`)이고, 이 `POST` 응답과
+> `GET /properties/{id}` 상세는 **11필드**다. 목록이 적은 이유는 그것이
+> `PropertySwitcher` 드롭다운의 **입력**이기 때문이며 의도된 차이다.
+>
+> **클라이언트 타입을 하나로 쓰지 않는다.** 목록 타입으로 등록 응답을
+> 받으면 `base_price`·`checkin_time` 같은 7필드가 타입에 없어 온보딩
+> 화면이 그 값을 읽지 못하고, 반대로 상세 타입으로 목록을 받으면
+> 없는 필드를 있다고 가정한다. **`PropertySummary`(목록)와
+> `PropertyDetail`(상세)을 나눈다.**
 요청에서 생략할 수 있는 값은 DB 기본값으로 채워져 돌아온다 —
 `base_price` `0`, `checkin_time` `"15:00"`, `checkout_time` `"11:00"`,
 `weekday_adjustment_enabled`·`holiday_adjustment_enabled` `true`.
@@ -730,8 +748,7 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 
 | HTTP | code | 조건 |
 |---|---|---|
-| 400 | `INVALID_ACCOMMODATION_TYPE` | `accommodation_type`이 허용값 6개가 아님(2절 요청 예시 앞의 주석) |
-| 400 | `INVALID_UNIT_TYPE` | `bookable_unit_type`이 `PROPERTY`/`ROOM`/`BED`가 아님 |
+| 400 | `VALIDATION_ERROR` | 필드 값이 규격에 맞지 않음 — `accommodation_type`이 허용값 6개 밖(2절 요청 예시 앞의 주석), `bookable_unit_type`이 `PROPERTY`/`ROOM`/`BED` 밖 등. **어느 필드가 왜 틀렸는지는 `message`가 알려준다** |
 | 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효(0절) |
 
 > `name`·`accommodation_type`·`bookable_unit_type`은 DB에서 `NOT NULL`이라
@@ -952,7 +969,7 @@ WHERE b.room_id = :room_id AND p.host_id = :current_host_id
 | HTTP | code | 조건 |
 |---|---|---|
 | 400 | `INVALID_UNIT_HIERARCHY` | 위 표의 판매단위 불일치 |
-| 400 | `INVALID_CAPACITY` | `capacity`가 `0` 이하. **`null`은 정상이다**(미입력) — 2.1절이 `null`과 `0`을 구분한 것과 짝을 이룬다 |
+| 400 | `VALIDATION_ERROR` | `capacity`가 `0` 이하 등 필드 값 규격 위반. **`capacity`가 `null`인 것은 정상이다**(미입력) — 2.1절이 `null`과 `0`을 구분한 것과 짝을 이룬다 |
 | 409 | `ROOM_NAME_ALREADY_EXISTS` | 같은 숙소에 같은 `room_name`(`UNIQUE(property_id, room_name)`) |
 | 409 | `BED_LABEL_ALREADY_EXISTS` | 같은 객실에 같은 `bed_label`(`UNIQUE(room_id, bed_label)`) |
 | 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` / `room_id`(0절) |
@@ -1140,26 +1157,37 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 | `external_property_id` | — | `.external_property_id` | 생략 시 `null` |
 | `room_id` | — | `.room_id` | **[v1.4 신규] 선택 필드. 생략하면 `null`**(숙소 전체 피드). **독채(`PROPERTY`)는 생략한다.** 호스텔이 **객실별 iCal 피드를 각각 등록할 때** 쓴다 — OTA는 객실마다 별도 리스팅을 만들고 **객실마다 별도 iCal URL**을 준다. ⚠️ **iCal 피드 자체는 객실을 알려주지 않으므로 호스트가 지정해야 한다**(db_spec 2.5절) |
 
-> **[v1.4] `room_id`를 잘못 지정하면 어떻게 되는가**
+> **[v1.4] `room_id`를 잘못 지정하면 어떻게 되는가 — 404와 400을 나눈다**
 >
 > | 상황 | 무엇이 막는가 | 응답 |
 > |---|---|---|
-> | **다른 숙소의 객실** id | DB 복합 FK `fk_channel_connections_room_property` `(room_id, property_id) → rooms` | **400** `INVALID_UNIT_HIERARCHY` |
-> | 존재하지 않는 객실 id | 같은 복합 FK | **400** `INVALID_UNIT_HIERARCHY` |
-> | `bookable_unit_type=PROPERTY`인 숙소에 `room_id` 지정 | 서비스 레이어 | **400** `INVALID_UNIT_HIERARCHY` |
+> | 존재하지 않는 객실 id | 서비스 레이어(조회 1회) | **404** `RESOURCE_NOT_FOUND` |
+> | **다른 숙소의 객실** id | 〃 (DB 복합 FK `fk_channel_connections_room_property`가 마지막 방어선) | **404** `RESOURCE_NOT_FOUND` |
+> | **내 숙소의 실재하는 객실**인데 `bookable_unit_type=PROPERTY` | 서비스 레이어 | **400** `INVALID_UNIT_HIERARCHY` |
 >
-> 셋 다 **같은 코드**다. 뜻이 같기 때문이다 — *"판매단위와 계층이
-> 어긋났다"*. 2.6절이 `PROPERTY` 숙소에 객실을 만드는 요청을 거부할 때
-> 쓴 것과 같은 코드이며, 4절 예약 생성도 같다. **여기서 404를 쓰지 않는
-> 이유**: `property_id`는 경로에 있고 이미 소유권이 검증된 상태라,
-> 남의 객실 id인지 없는 id인지가 아니라 **요청 본문이 그 숙소의 계층과
-> 맞지 않는다**는 것이 실제 문제다. 0절의 404 통일 규칙은 **경로의
-> 리소스**를 가리킬 때 적용된다.
+> 🔴 **앞의 둘을 400으로 돌려주면 존재 정보가 샌다.** 경로의
+> `{property_id}`는 부존재와 타인 소유를 구분하지 않고 404로 막는데
+> (0절), 본문의 `room_id`만 400을 주면 **"그 id는 존재하되 내 것이
+> 아니거나, 아예 없다"까지 좁혀진다.** id를 1씩 올려가며 응답 코드를
+> 비교하면 남의 객실 id 공간을 추론할 수 있다 — **0절이 403을 금지한
+> 것과 같은 이유**다. 그래서 한 쿼리
+> (`WHERE room_id = ? AND property_id = ?`)로 존재와 소속을 함께 보고,
+> 없으면 **두 경우를 구분하지 않고 404**를 던진다.
+>
+> **세 번째만 400인 이유**: 그 응답은 **요청자가 이미 아는 정보만으로
+> 판정된다.** 자기 숙소의 판매단위와 자기 객실의 존재는 이미 알고 있고,
+> 이 400은 새로운 사실을 하나도 알려주지 않는다. 고칠 방법도 명확하다 —
+> **`room_id`를 빼면 된다.** 2.6절이 `PROPERTY` 숙소에 객실을 만드는
+> 요청을 거부할 때 쓴 것과 같은 코드이며, 4절 예약 생성도 같다.
 >
 > ⚠️ **독채에 `room_id`를 허용하지 않는 이유는 2.6절과 같다.** 그 숙소에는
 > 객실 개념 자체가 없어 `GET .../rooms`가 **빈 배열을 반환하는 것이
 > 정상**이다(2.1절). 채울 수 없는 값을 받아 두면 화면이 그 `room_id`로
 > 객실명을 찾다가 실패한다.
+>
+> ※ `PROPERTY` 판매단위인데 `ROOMS` 행이 존재하는 상태는 DB가 막지
+> 않는다(`ROOMS`에 판매단위 제약이 없다). 그래서 세 번째 경우가 실제로
+> 발생할 수 있고, 그때만 400이다.
 
 > **`ical_url`은 DB에서 nullable인데 요청에서는 필수로 둔다.** 컬럼이
 > nullable인 것은 향후 iCal이 아닌 연동 방식을 대비한 여지이고, 지금
@@ -1193,9 +1221,9 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 |---|---|---|
 | 400 | `INVALID_CHANNEL` | `channel`이 3값이 아님 |
 | 400 | `ICAL_URL_REQUIRED` | `ical_url` 누락 또는 빈 문자열 |
-| 400 | `INVALID_UNIT_HIERARCHY` | **[v1.4]** `room_id`가 다른 숙소의 객실이거나 존재하지 않음 / 독채에 `room_id`를 지정함(위 표) |
+| 400 | `INVALID_UNIT_HIERARCHY` | **[v1.4]** 내 숙소의 실재하는 객실인데 판매단위가 `PROPERTY`(위 표) |
 | 409 | `CHANNEL_ALREADY_CONNECTED` | **[v1.4]** 같은 `property_id`+`channel`+`room_id` 중복(위 3절 규칙, `UNIQUE NULLS NOT DISTINCT (property_id, channel, room_id)`). 독채는 `room_id`가 `NULL`이라 채널당 1개로 제한된다 |
-| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` / **[v1.4]** `room_id`가 없거나 다른 숙소의 객실(위 표 — 둘을 구분하지 않는다) |
 
 > **URL 유효성을 등록 시점에 검증하지 않는다.** iCal 응답을 확인하려면
 > 외부 네트워크 호출이 필요한데, 코딩규칙 11번이 그 호출에 5초 타임아웃과
@@ -1664,10 +1692,18 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 | `channel` | ❌ | 경로에 있다. 바꾸는 것은 다른 행을 고치는 것이다 |
 
 > ⚠️ **요율은 비율이지 퍼센트가 아니다.** 15.5%는 `0.1550`이며 `15.5`가
-> 아니다. `NUMERIC(5,4)`는 `9.9999`까지 담기므로 타입만으로는 막히지 않아
-> DB에 `CHECK (commission_rate >= 0 AND commission_rate <= 1)`가 걸려 있다.
+> 아니다. `NUMERIC(5,4)`는 `9.9999`까지 담기므로 타입만으로는 막히지 않는다.
 > 잘못 넣으면 **수수료가 매출의 15.5배**가 된다. 화면은 `%` 단위로 입력받고
 > 서버에 보내기 전에 100으로 나누는 편이 안전하다.
+>
+> **범위 검증은 서비스 레이어 한 곳에서만 한다.** Pydantic
+> (`ge=0, le=1`)으로도 잡히고 DB `CHECK(ck_channel_fee_rate_range)`로도
+> 잡히지만, **응답을 만드는 곳은 서비스 레이어 하나**로 정한다 —
+> Pydantic이 먼저 걸면 FastAPI의 기본 422가 나가 이 문서의 봉투·코드
+> 규약을 벗어나고, DB까지 가면 `IntegrityError`를 다시 번역해야 한다.
+> **DTO에는 범위 제약을 걸지 않고**(타입만 `Decimal`), 서비스가
+> `INVALID_COMMISSION_RATE`를 던진다. DB `CHECK`는 동시성·직접 수정에
+> 대비한 **마지막 방어선**으로 남는다(3.2절 `room_id` 검증과 같은 구조).
 
 > ⚠️ **`fee_source`가 무슨 값으로 바뀌는지는 아직 정의되지 않았다.**
 > 기본값 `'system_default_2026'`은 **"호스트가 확인하지 않은 시스템
@@ -1684,13 +1720,34 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 
 | HTTP | code | 조건 |
 |---|---|---|
-| 400 | `INVALID_COMMISSION_RATE` | **[v2.5 신규]** `commission_rate`가 0 미만이거나 1 초과(DB `CHECK`와 짝) |
+| 400 | `INVALID_COMMISSION_RATE` | **[v2.5 신규]** `commission_rate`가 0 미만이거나 1 초과. **서비스 레이어가 잡는다**(아래) |
 | 400 | `INVALID_CHANNEL` | 경로의 `{channel}`이 3값이 아님(3절 코드 재사용) |
 | 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` / **그 숙소에 해당 채널의 요율 행이 없음**(연결을 한 번도 만든 적이 없는 채널) |
 | 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
 
 > **요율 행이 없을 때 404인 이유**: `POST`가 없으므로 이 `PATCH`는 만들 수
 > 없다. 채널을 먼저 연결하면 서버가 행을 만들고, 그 뒤에 고칠 수 있다.
+
+> ⚠️ **호스트가 보기에 "연결된 채널인데 404"가 될 수 있다.** 요율 행은
+> **채널 연결을 만들 때만** 생기므로, 아래 두 경우에 연결 상태와 요율 행
+> 존재가 어긋난다.
+>
+> | 상황 | 왜 행이 없나 |
+> |---|---|
+> | v1.4 이전부터 있던 숙소 중 **그 채널 연결이 없던 숙소** | ⑤의 백필이 `CHANNEL_CONNECTIONS` 기준이라 **연결이 없던 (숙소, 채널)은 대상이 아니었다** |
+> | 연결을 지웠다 다시 만드는 중 | 행은 연결 삭제에도 남지만(FK가 없다), **한 번도 연결한 적 없는 채널**이면 애초에 없다 |
+>
+> **그때 해야 할 일은 하나다 — `POST /properties/{id}/channels`로 그 채널을
+> 먼저 연결한다.** 서버가 요율 행을 기본값으로 만들고, 그 뒤에 이 `PATCH`가
+> 동작한다. 화면은 404를 에러 토스트로 던지지 말고 *"이 채널은 아직
+> 연결되지 않았습니다"*로 안내한다(`GET .../fee-rates`의 `connected`가
+> 이미 그 정보를 준다).
+>
+> 🔴 **이 `PATCH`를 upsert로 바꾸지 않는다.** `POST`를 만들지 않은 이유와
+> 정면으로 충돌한다 — 요율 행은 **호스트가 만드는 것이 아니라 연결의
+> 부산물**이다. upsert를 허용하면 연결 없는 채널의 요율이 임의로 생기고,
+> 나중에 그 채널을 연결할 때 자동 생성(`ON CONFLICT DO NOTHING`)과
+> 겹친다.
 
 ---
 
@@ -1701,7 +1758,7 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 | GET | `/properties/{property_id}/cleaning-tasks` | 청소작업 목록 |
 | PATCH | `/cleaning-tasks/{task_id}/status` | 상태 전이(PENDING→...→VERIFIED) |
 | POST | `/cleaning-tasks/{task_id}/photo` | 완료사진 업로드(행 1건 추가) |
-| DELETE | `/cleaning-task-photos/{photo_id}` | **[v1.4 신규]** 완료사진 1장 삭제 |
+| DELETE | `/cleaning-tasks/{task_id}/photos/{photo_id}` | **[v1.4 신규]** 완료사진 1장 삭제 |
 
 > 청소작업은 `reservation_id`당 자동 1건 생성(예약이 CONFIRMED로
 > 전이되는 즉시 서버가 자동 트리거, `scheduled_at`=해당 예약의
@@ -1741,7 +1798,16 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > 인스턴스가 재시작·슬립 복귀할 때마다 초기화된다. 결정 시점은 청소 화면
 > 구현 전이며, 그때까지는 시드 데이터의 정적 URL을 담는다(db_spec 2.18절).
 
-> **[v1.4 신규] `DELETE /cleaning-task-photos/{photo_id}` — 사진 1장 삭제**
+> **[v1.4 신규] `DELETE /cleaning-tasks/{task_id}/photos/{photo_id}` —
+> 사진 1장 삭제**
+>
+> **경로를 `task` 스코프로 둔다.** 6절의 다른 경로가 전부
+> `/cleaning-tasks/{task_id}/...`이고(`PATCH .../status`,
+> `POST .../photo`), 사진은 청소작업에 속한 하위 리소스이므로 계층이
+> 경로에 드러나는 편이 읽기 쉽다. `/properties/{property_id}/...`로
+> 가지 않는 이유는 **6절 전체가 이미 `task` 스코프**라 한 절 안에서
+> 스코프가 갈리기 때문이다(3절의 `DELETE /channels/{connection_id}`도
+> 같은 형태다).
 >
 > v1.3까지는 *"삭제가 필요하면 배열 전체를 덮어쓴다(개별 삭제 엔드포인트는
 > 만들지 않음)"*였다. **그 문장을 철회한다.** 이유가 두 가지다.
@@ -1758,15 +1824,26 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > { "data": { "photo_id": 502, "deleted": true }, "error": null }
 > ```
 >
-> **소유권 검증**: 이 경로에는 `property_id`가 없다. 0절 규칙에 따라
-> 조회 자체에 소유권 조건을 묶는다.
+> 🔴 **소유권 검증 — 이 조인을 빠뜨리면 IDOR이다.** 경로에
+> `property_id`가 없으므로 0절 규칙에 따라 **조회 자체에 소유권 조건을
+> 묶는다.** 파이썬 `if`로 나중에 검사하지 않는다.
 >
 > ```sql
 > SELECT p.* FROM cleaning_task_photos p
 > JOIN cleaning_tasks c ON p.task_id = c.task_id
 > JOIN properties pr ON c.property_id = pr.property_id
-> WHERE p.photo_id = :photo_id AND pr.host_id = :current_host_id
+> WHERE p.photo_id = :photo_id
+>   AND p.task_id  = :task_id          -- 경로의 두 id가 서로 맞는지도 본다
+>   AND pr.host_id = :current_host_id
 > ```
+>
+> **`CLEANING_TASKS.property_id`를 바로 쓴다** — `RESERVATIONS`를 거치지
+> 않는다. 그 컬럼이 `(reservation_id, property_id)` 복합 FK의 구성
+> 컬럼으로 이미 존재하며(db_spec 2.9절), 예약을 한 번 더 조인하면 같은
+> 사실을 두 경로로 확인하는 셈이 된다.
+>
+> **경로의 `{task_id}`와 `{photo_id}`가 어긋나도 404다** — 남의 사진
+> id를 자기 task 경로에 얹어 보는 것을 막는다.
 >
 > 결과가 없으면 부존재와 타인 소유를 구분하지 않고 `404 RESOURCE_NOT_FOUND`다.
 > **파일 실체는 지우지 않는다** — 저장처가 미정이라 지울 대상이 정해져
