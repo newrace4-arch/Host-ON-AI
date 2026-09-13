@@ -6,7 +6,7 @@ Alembic autogenerate가 모든 테이블을 인식하려면 여기서 전부 임
 from app.core.database import Base
 from app.models.action_item import ActionItem
 from app.models.channel import ChannelConnection
-from app.models.cleaning import CleaningTask
+from app.models.cleaning import CleaningTask, CleaningTaskPhoto
 from app.models.compliance import ChecklistItem
 from app.models.host import Host
 from app.models.inquiry import (
@@ -51,4 +51,6 @@ __all__ = [
     "ChecklistItem",
     # 17. response_sources [v1.4 신규]
     "ResponseSource",
+    # 18. cleaning_task_photos [v1.4 신규]
+    "CleaningTaskPhoto",
 ]
