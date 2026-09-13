@@ -135,6 +135,11 @@ VERIFIED)에 확정 작업으로 올라가 있어, 해당 날짜에 가서야 "�
 적을 때는 저장할 컬럼이 명세서에 있는지 먼저 확인한다"**를 `CLAUDE.md`
 규칙으로 명문화해 재발을 막았다.
 
+> **후속(9/13, v1.4)**: `photo_urls`는 **`CLEANING_TASK_PHOTOS` 테이블의
+> 행으로 바뀌었다**(JSONB 배열에는 FK가 걸리지 않는다는 9/11 강사님 지적).
+> **append 운용 규칙과 위 CLAUDE.md 규칙은 그대로 유효하다** — 저장
+> 형태만 바뀌었다. 이 항목은 9/4의 기록이므로 본문은 고치지 않는다.
+
 ### 11. 액션아이템이 다른 숙소의 예약을 참조할 수 있는 구멍
 
 **문제**: `ACTION_ITEMS`는 `property_id`와 `reservation_id`를 각각
@@ -553,22 +558,32 @@ Docker Desktop을 재기동하자 데몬이 정상 응답했다(Server 29.5.2).
 아예 없는 엔드포인트가 7개 발견됐다.
 
 - `settlements` (5절)
-- `financial-config` (5절)
+- `financial-config` (5절) — ✅ **해소: v2.5(9/13)**
 - `action-items` (9절) — ✅ **해소: v2.0(9/8)**
 - `inquiries` 목록 (7절)
 - `knowledge-chunks` (8절)
 - `channels` (3절) — ✅ **해소: v2.1(9/8)**
 - `rooms` / `beds` (2절) — ✅ **해소: v2.1(9/8)**
 
-> **해소 현황(9/8 기준): 7건 중 3건 해소, 남은 것 4건**
-> — `settlements` / `financial-config` / `inquiries` 목록 /
-> `knowledge-chunks`.
+> **해소 현황(9/13 기준): 7건 중 4건 해소, 남은 것 3건**
+> — `settlements` / `inquiries` 목록 / `knowledge-chunks`.
+> *(9/8 기준은 3건 해소·4건 잔여였다. `financial-config`가 9/13에
+> 해소됐다.)*
 >
 > 위 목록의 7건은 **성격이 전부 같다** — 테이블은 실재하고 API 응답
-> 예시만 없는 누락이다. `financial-config`도 예외가 아니다:
-> `FINANCIAL_CONFIGS`는 DB명세서 2.7절과 마이그레이션에 이미 존재하며
-> (`config_id`·`commission_rate`·`base_nightly_rate` 등 7컬럼),
-> 응답 스펙만 없다. 10/2 정산 구현 착수 전에 확정한다.
+> 예시만 없는 누락이다. `financial-config`도 예외가 아니었다:
+> `FINANCIAL_CONFIGS`는 DB명세서 2.7절과 마이그레이션에 이미 존재했고
+> (당시 `config_id`·`commission_rate`·`base_nightly_rate` 등 7컬럼),
+> 응답 스펙만 없었다.
+>
+> **9/13 해소 경위**: v1.4 ⑤에서 요율 3개가 `CHANNEL_FEE_RATES`로
+> 옮겨가고 `base_nightly_rate`가 제거돼 **이 테이블에는 `vat_included`
+> 하나만 남았다**(4컬럼). 컬럼이 줄어 스펙이 짧아졌다고 비워 두면 같은
+> 누락이 반복되므로 api_contract **5.1절**에 명시했고, 새로 생긴 요율
+> 테이블의 API는 **5.2절**(`GET·PATCH .../fee-rates`)로 함께 확정했다.
+> 원래 계획은 *"10/2 정산 구현 착수 전"*이었는데, **스키마가 먼저
+> 바뀌면서 그 앞당김이 불가피했다** — 컬럼이 사라진 채 스펙만 옛
+> 상태로 남으면 9/4 규칙이 잡으려던 것과 같은 어긋남이 된다.
 >
 > **테이블 자체가 없는 것은 이 목록에 없다.** 그런 항목은 `/checkin`
 > (비대면 체크인)이며, api_contract 엔드포인트 0개·DB 도메인 부재로

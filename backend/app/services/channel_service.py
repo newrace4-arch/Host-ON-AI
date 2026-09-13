@@ -29,11 +29,20 @@ from app.utils.db_errors import violates_constraint
 
 
 class ChannelAlreadyConnectedError(AppError):
-    """같은 숙소에 같은 채널을 두 번 연결하려 한 경우(409).
+    """같은 숙소·같은 채널·같은 객실 조합을 두 번 연결하려 한 경우(409).
 
-    DB의 `CHANNEL_CONNECTIONS.uq_property_channel(property_id, channel)`
-    제약과 짝을 이룬다
-    (api_contract.md 3절: MVP는 채널당 연결 1개).
+    DB의 **`CHANNEL_CONNECTIONS.uq_property_channel`** 제약과 짝을 이룬다.
+    **[v1.4] 컬럼이 `(property_id, channel)`에서
+    `(property_id, channel, room_id)`로 늘었고 `NULLS NOT DISTINCT`가
+    붙었다.** 제약 **이름은 그대로 유지**한다 — 이 클래스가 그 이름으로
+    `IntegrityError`를 409로 번역하기 때문이다.
+
+    **"채널당 연결 1개"는 독채에만 해당한다**(api_contract 3절).
+    판매단위가 `PROPERTY`인 숙소는 `room_id`가 항상 NULL인데
+    `NULLS NOT DISTINCT`가 NULL을 서로 같은 값으로 취급하므로
+    `(숙소, 채널)`당 하나로 제한된다. **호스텔은 객실마다 별도 iCal
+    피드가 나오므로 같은 채널의 연결이 여러 개 존재할 수 있다** —
+    그것이 v1.4에서 `room_id`를 추가한 이유다(db_spec 2.5절).
     """
 
     status_code = 409

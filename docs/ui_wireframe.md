@@ -285,7 +285,7 @@
 | 자동응답 가능 여부 | 〃 | `classification.auto_respondable` |
 | AI 답변 초안 | 〃 | `response.response_text` |
 | 감지 언어 | 〃 | `response.detected_language` |
-| 근거(RAG 출처) | 〃 | `response.sources` |
+| 근거(RAG 출처) | 〃 | `response.sources` — **[v1.4] 원소가 객체다**: `{ chunk_id, rank }`. 참조 경로는 그대로이나 **그리는 방식이 달라진다**(옛 `["chunk_17"]` 문자열이 아니다). `rank` 순으로 정렬돼 오며, **빈 배열이 정상값**이다 |
 | 최신 응답 여부 | 〃 | `response.is_latest` |
 | 자동 발송 여부 | 〃 | `auto_sent` |
 | 재생성 | `POST /inquiries/{id}/regenerate` | — |
@@ -361,14 +361,24 @@
 | 실수령(월) | 〃 | `[DB]` `net_payout` |
 | 적용 수수료율(스냅샷) | 〃 | `[DB]` `applied_commission_rate` |
 | 대상 월 | 〃 | `[DB]` `target_month` |
-| 수수료 설정(접힌 섹션) | `GET·PATCH /properties/{id}/financial-config` | `[DB]` `commission_rate`, `fee_type`, `vat_included`, `base_nightly_rate` |
+| VAT 표시 설정(접힌 섹션) | `GET·PATCH /properties/{id}/financial-config` | **[v1.4]** `vat_included` **하나뿐이다** |
+| 채널별 수수료율(접힌 섹션) | **[v1.4]** `GET /properties/{id}/fee-rates`, `PATCH /properties/{id}/fee-rates/{channel}` | `channel`, `fee_type`, `commission_rate`, `fee_source`, `connected` |
 | 예약별 내역 | `GET /properties/{id}/reservations` | `reservation_id`, `check_in`, `check_out`, `gross_amount`, `fee_amount`, `net_amount`, `financial_status` |
 | 일괄 확정 | `POST /properties/{id}/settlements/{month}/confirm` | — |
 
-> **`GET /properties/{id}/settlements`와 `financial-config`의 응답 예시가
-> `api_contract`에 없다.** 위 `[DB]` 필드는 DB명세서 v1.3의
-> `MONTHLY_SETTLEMENTS`·`FINANCIAL_CONFIGS` 컬럼명이며, **응답 필드명은
-> 정산 구현 시 확정**한다.
+> **[v1.4] 이 섹션이 두 경로로 나뉘었다.** v1.3까지는 수수료율이
+> `FINANCIAL_CONFIGS`에 있어 `financial-config` 하나로 끝났으나, ⑤에서
+> `fee_type`·`commission_rate`·`fee_source`가 `CHANNEL_FEE_RATES`로
+> 옮겨가고 `base_nightly_rate`는 **제거**됐다(단가의 원본은
+> `PROPERTIES.base_price` 하나다). **요율은 "숙소의 속성"이 아니라
+> "숙소×채널의 속성"**이라 채널 3개에 각각 다른 값이 들어갈 수 있고,
+> 화면도 **채널별 행으로 보여야 한다.**
+>
+> `financial-config`와 `fee-rates`의 **응답 스펙은 api_contract 5.1·5.2절에
+> 확정됐다(v2.5, 9/13)** — 위 필드명은 그 절을 따른다.
+> `GET /properties/{id}/settlements`는 **여전히 응답 예시가 없다.** 그
+> 행의 `[DB]` 필드는 DB명세서의 `MONTHLY_SETTLEMENTS` 컬럼명이며 정산
+> 구현 시 확정한다.
 
 ### (4) 상태별 변화
 
