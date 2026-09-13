@@ -34,11 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_host_id
 from app.schemas.property import (
+    BedCreateRequest,
     BedResponse,
     PropertyCreateRequest,
     PropertyDetailResponse,
     PropertySummaryResponse,
     PropertyUpdateRequest,
+    RoomCreateRequest,
     RoomResponse,
 )
 from app.services import property_service
@@ -148,3 +150,49 @@ async def update_property(
         "data": PropertyDetailResponse.model_validate(prop).model_dump(),
         "error": None,
     }
+
+
+@router.post(
+    "/properties/{property_id}/rooms",
+    status_code=status.HTTP_201_CREATED,
+    summary="객실 등록",
+)
+async def create_room(
+    property_id: int,
+    payload: RoomCreateRequest,
+    db: DbSession,
+    host_id: CurrentHostId,
+) -> dict[str, Any]:
+    """**201**이고 응답은 객실 목록의 원소 하나와 같은 모양이다(2.6절).
+
+    등록 직후 화면이 목록에 그 항목을 덧붙이기만 하면 된다. 판매단위가
+    `PROPERTY`면 400, 같은 이름이 있으면 409다.
+    """
+    room = await property_service.create_room(
+        db, property_id=property_id, host_id=host_id, payload=payload
+    )
+    await db.commit()
+    return {"data": RoomResponse.model_validate(room).model_dump(), "error": None}
+
+
+@router.post(
+    "/rooms/{room_id}/beds",
+    status_code=status.HTTP_201_CREATED,
+    summary="침대 등록",
+)
+async def create_bed(
+    room_id: int,
+    payload: BedCreateRequest,
+    db: DbSession,
+    host_id: CurrentHostId,
+) -> dict[str, Any]:
+    """경로에 `property_id`가 없어 **객실에서 숙소를 역추적**해 검증한다(2.6절).
+
+    `BED` 단위 숙소가 아니면 400, 같은 라벨이 있으면 409, 남의 객실이거나
+    없는 객실이면 404다.
+    """
+    bed = await property_service.create_bed(
+        db, room_id=room_id, host_id=host_id, payload=payload
+    )
+    await db.commit()
+    return {"data": BedResponse.model_validate(bed).model_dump(), "error": None}

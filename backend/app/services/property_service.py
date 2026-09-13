@@ -17,12 +17,26 @@ id가 실재하는지 알아낼 수 있다(CLAUDE.md 코딩규칙 1).
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ImmutableFieldError, ResourceNotFoundError
+from app.core.exceptions import (
+    BedLabelAlreadyExistsError,
+    ImmutableFieldError,
+    InvalidUnitHierarchyError,
+    ResourceNotFoundError,
+    RoomNameAlreadyExistsError,
+)
+from app.models.enums import BookableUnitType
 from app.models.property import Bed, Property, Room
-from app.schemas.property import PropertyCreateRequest, PropertyUpdateRequest
+from app.schemas.property import (
+    BedCreateRequest,
+    PropertyCreateRequest,
+    PropertyUpdateRequest,
+    RoomCreateRequest,
+)
 from app.services.reservation_service import get_owned_property
+from app.utils.db_errors import violates_constraint
 
 
 async def list_properties(db: AsyncSession, *, host_id: int) -> list[Property]:
@@ -206,3 +220,148 @@ async def update_property(
 
     await db.flush()
     return prop
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 객실·침대 생성 (api_contract 2.6절)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _validate_unit_for_room_creation(prop: Property) -> None:
+    """[2.6절] **이 숙소에 객실이라는 것이 존재할 수 있는가**만 본다.
+
+    `bookable_unit_type`이 `ROOM`·`BED`면 통과, `PROPERTY`면
+    `400 INVALID_UNIT_HIERARCHY`다. 2.1절이 *"`PROPERTY` 숙소의 객실 목록이
+    빈 배열인 것이 정상"*이라고 정한 것의 **짝**이다 — 만들 수 있게 두면
+    조회는 계속 빈 배열을 기대하는데 DB에는 행이 쌓인다.
+
+    ## 🔴 이름이 비슷한 함수가 셋이다. 합치지 마라
+
+    | 함수 | 쓰는 곳 | 묻는 것 | `room_id` |
+    |---|---|---|---|
+    | `reservation_service.validate_unit_hierarchy` | 예약 생성 | 이 **예약의** room/bed 조합이 판매단위와 맞나 | `ROOM` 숙소에서 **필수** |
+    | `channel_service._validate_room_for_channel` | 채널 연결 | 이 **피드에 건 객실**이 내 숙소 것이고 걸 수 있나 | **선택**(숙소 전체 피드 허용) |
+    | `_validate_unit_for_room_creation`(이 함수) | 객실 생성 | 이 **숙소에** 객실이 존재할 수 있나 | **인자에 없다** — 아직 만들지 않았다 |
+
+    **`validate_unit_hierarchy`를 여기에 쓰면 그 자리에서 틀린다.** `ROOM`
+    단위 숙소에 객실을 만들 때 넘길 `room_id`가 없어 `None`이 되는데, 그
+    함수는 그것을 **`ROOM_ID_REQUIRED` 400**으로 거부한다 — **정상 요청이
+    막힌다.** 2.6절 표는 그 칸이 ✅다.
+
+    `_validate_room_for_channel`도 맞지 않는다. 그쪽은 **이미 존재하는**
+    객실을 검사하는 함수이고 DB 조회가 들어 있다.
+
+    셋 다 *"계층 검증"*이라는 같은 말로 불릴 수 있어 **다음에 누가 합치려
+    한다.** 뜻이 다르다는 것을 여기 남긴다(2026-09-13에 이 함정을 세 번
+    만났다 — devlog 3절).
+
+    :raises InvalidUnitHierarchyError: 400 `INVALID_UNIT_HIERARCHY`.
+    """
+    if prop.bookable_unit_type is BookableUnitType.PROPERTY:
+        raise InvalidUnitHierarchyError(
+            "이 숙소는 전체(PROPERTY) 단위로 판매합니다. 객실을 등록할 수 없습니다.",
+            code="INVALID_UNIT_HIERARCHY",
+        )
+
+
+def _validate_unit_for_bed_creation(prop: Property) -> None:
+    """[2.6절] 침대는 **`BED` 단위 숙소에서만** 만들 수 있다.
+
+    `ROOM` 단위 숙소도 거부한다 — 객실을 침대로 나누어 팔지 않으므로 그
+    객실의 침대 목록이 빈 배열인 것이 정상이다(2.2절). 위
+    `_validate_unit_for_room_creation`과 **통과 조건이 다르다**(그쪽은
+    `ROOM`도 통과) — 2.6절 표의 두 열이 갈리는 지점이라 함수를 나눴다.
+
+    같은 코드(`INVALID_UNIT_HIERARCHY`)를 쓴다. 2.6절이 *"4절이 예약
+    생성에서 쓰는 것과 같은 코드를 재사용한다 … 새 코드를 만들면 프론트가
+    같은 상황을 두 코드로 처리하게 된다"*고 정했다 — **재사용하는 것은
+    코드 문자열이지 함수가 아니다.**
+    """
+    if prop.bookable_unit_type is not BookableUnitType.BED:
+        raise InvalidUnitHierarchyError(
+            "이 숙소는 침대(BED) 단위로 판매하지 않습니다. 침대를 등록할 수 없습니다.",
+            code="INVALID_UNIT_HIERARCHY",
+        )
+
+
+async def _get_owned_room_and_property(
+    db: AsyncSession, room_id: int, host_id: int
+) -> tuple[Room, Property]:
+    """객실과 **그 상위 숙소**를 한 쿼리로 가져온다(소유권 포함).
+
+    `get_owned_room`과 조건이 같지만 `Property`도 함께 돌려준다. 침대 생성은
+    판매단위를 봐야 하는데, `room.property`로 따라가면 **지연로딩(동기 IO)**이
+    걸려 async 컨텍스트에서 `MissingGreenlet`이 난다.
+    """
+    stmt = (
+        select(Room, Property)
+        .join(Property, Property.property_id == Room.property_id)
+        .where(Room.room_id == room_id, Property.host_id == host_id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise ResourceNotFoundError("요청한 객실을 찾을 수 없습니다.")
+    return row[0], row[1]
+
+
+async def create_room(
+    db: AsyncSession, *, property_id: int, host_id: int, payload: RoomCreateRequest
+) -> Room:
+    """객실 등록(api_contract 2.6절). **201**, 응답은 2.1절 목록의 원소와 동형.
+
+    판정 순서는 **소유권(404) → 판매단위(400) → UNIQUE(409)**다. 앞의 둘은
+    `update_property`와 같은 이유로 이 순서여야 한다(400이 먼저 나가면 남의
+    숙소에 대해서도 400이 나가 존재가 샌다).
+
+    🔴 **409는 선조회로 막지 않는다.** 이름이 비어 있는지 먼저 확인하고
+    INSERT하면 그 사이에 다른 요청이 같은 이름을 넣을 수 있다(TOCTOU).
+    2.6절이 *"선조회로 미리 막지 않는 이유는 그 사이 다른 요청이 끼어들 수
+    있어서다"*라고 명시했다. DB 제약이 판정하고 우리는 **번역만** 한다.
+    """
+    prop = await get_owned_property(db, property_id, host_id)
+    _validate_unit_for_room_creation(prop)
+
+    room = Room(
+        property_id=property_id,
+        room_name=payload.room_name,
+        capacity=payload.capacity,
+    )
+    db.add(room)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        # ⚠️ **제약 이름 전체로 판정한다.** `uq_room_`을 접두사로 쓰면
+        #   `uq_room_property_ref`(복합 FK 참조용 후보키)까지 함께 걸린다.
+        if violates_constraint(exc, "uq_property_room_name"):
+            raise RoomNameAlreadyExistsError(
+                f"이미 같은 이름의 객실이 있습니다: {payload.room_name}"
+            ) from exc
+        raise
+    return room
+
+
+async def create_bed(
+    db: AsyncSession, *, room_id: int, host_id: int, payload: BedCreateRequest
+) -> Bed:
+    """침대 등록(api_contract 2.6절). **201**, 응답은 2.2절 목록의 원소와 동형.
+
+    **경로에 `property_id`가 없다.** 객실에서 숙소를 역추적해 소유권을 본다 —
+    `GET /rooms/{id}/beds`와 같은 조인이다(2.6절 말미 SQL). 이것을 빠뜨리면
+    남의 객실에 침대를 만들 수 있다.
+    """
+    room, prop = await _get_owned_room_and_property(db, room_id, host_id)
+    _validate_unit_for_bed_creation(prop)
+
+    bed = Bed(room_id=room.room_id, bed_label=payload.bed_label)
+    db.add(bed)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        if violates_constraint(exc, "uq_room_bed_label"):
+            raise BedLabelAlreadyExistsError(
+                f"이미 같은 라벨의 침대가 있습니다: {payload.bed_label}"
+            ) from exc
+        raise
+    return bed

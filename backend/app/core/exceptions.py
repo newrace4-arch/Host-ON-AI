@@ -87,6 +87,30 @@ class ImmutableFieldError(AppError):
     code = "IMMUTABLE_FIELD"
 
 
+class RoomNameAlreadyExistsError(AppError):
+    """같은 숙소에 같은 `room_name`(409, api_contract 2.6절).
+
+    DB의 `uq_property_room_name`과 짝을 이루는 도메인 에러다.
+    `CHANNEL_ALREADY_CONNECTED`와 같은 계열이며, **선조회로 미리 막지
+    않는다** — 조회와 INSERT 사이에 다른 요청이 끼어들 수 있다(TOCTOU).
+    제약 위반을 잡아 번역하는 것이 유일하게 정확한 방법이다.
+    """
+
+    status_code = 409
+    code = "ROOM_NAME_ALREADY_EXISTS"
+
+
+class BedLabelAlreadyExistsError(AppError):
+    """같은 객실에 같은 `bed_label`(409, api_contract 2.6절).
+
+    DB의 `uq_room_bed_label`과 짝을 이룬다. 위 `RoomNameAlreadyExistsError`와
+    같은 이유로 선조회를 쓰지 않는다.
+    """
+
+    status_code = 409
+    code = "BED_LABEL_ALREADY_EXISTS"
+
+
 class ReservationOverlapError(AppError):
     """같은 숙소 안에서 판매단위를 넘나드는 기간 충돌(409).
 

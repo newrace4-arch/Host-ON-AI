@@ -197,6 +197,41 @@ class PropertyDetailResponse(BaseModel):
         return value.strftime("%H:%M")
 
 
+class RoomCreateRequest(BaseModel):
+    """`POST /properties/{property_id}/rooms` 요청 (api_contract 2.6절).
+
+    🔴 **`capacity`는 nullable이고 `gt=0`이다.** 셋을 구분해야 한다 —
+
+    | 보낸 값 | 결과 |
+    |---|---|
+    | 생략 · `null` | **정상.** `null`(= 미입력)로 저장된다(2.1절) |
+    | `1` 이상 | 그 값으로 저장 |
+    | `0` · 음수 | **400 `VALIDATION_ERROR`**(2.6절 에러 표) |
+
+    Pydantic v2의 `gt`는 **값이 있을 때만** 검사하므로 `None`은 그대로
+    통과한다. 그래서 nullable과 범위 제약이 한 필드에 공존한다.
+
+    ⚠️ **검증을 서비스가 아니라 여기에 둔다.** 2.6절이 이 경우의 코드를
+    `VALIDATION_ERROR`로 정했고(9/13에 `INVALID_CAPACITY`를 철회했다),
+    `main.py`의 `RequestValidationError` 핸들러가 이미 그 코드로
+    번역한다. 서비스에서 잡으면 같은 결과를 얻으려고 코드를 더 쓰는
+    셈이고 검증 위치가 두 곳으로 갈린다.
+
+    반대로 `INVALID_COMMISSION_RATE`처럼 **전용 코드**가 필요한 검증은
+    Pydantic에 걸 수 없다 — 기본 422가 봉투·코드 규약을 벗어나기
+    때문이다. *형식·범위는 Pydantic, 업무 규칙은 서비스*가 그 경계다.
+    """
+
+    room_name: str = Field(min_length=1, max_length=100)
+    capacity: int | None = Field(default=None, gt=0)
+
+
+class BedCreateRequest(BaseModel):
+    """`POST /rooms/{room_id}/beds` 요청 (api_contract 2.6절)."""
+
+    bed_label: str = Field(min_length=1, max_length=50)
+
+
 class RoomResponse(BaseModel):
     """객실 1건 — `GET /properties/{id}/rooms`의 원소(api_contract 2.1절).
 
