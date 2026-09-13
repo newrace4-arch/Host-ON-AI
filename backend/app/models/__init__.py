@@ -14,6 +14,7 @@ from app.models.inquiry import (
     InquiryApproval,
     InquiryClassification,
     InquiryResponse,
+    ResponseSource,
 )
 from app.models.property import Bed, Property, Room
 from app.models.rag import KnowledgeChunk
@@ -48,4 +49,6 @@ __all__ = [
     "ActionItem",
     # 16. checklist_items
     "ChecklistItem",
+    # 17. response_sources [v1.4 신규]
+    "ResponseSource",
 ]

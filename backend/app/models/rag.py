@@ -1,4 +1,4 @@
-"""KNOWLEDGE_CHUNKS — DB명세서 v1.3 2.14절 (RAG 정적 지식 콘텐츠).
+"""KNOWLEDGE_CHUNKS — DB명세서 v1.4 2.14절 (RAG 정적 지식 콘텐츠).
 
 벡터 저장소는 **PostgreSQL + pgvector 확장** 하나로 처리한다. 별도 벡터DB
 서버(ChromaDB 등)를 도입하지 않는다(CLAUDE.md 확정 사항).
@@ -9,7 +9,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -39,7 +48,13 @@ class KnowledgeChunk(Base):
     """
 
     __tablename__ = "knowledge_chunks"
-    __table_args__ = (Index("idx_knowledge_chunks_property", "property_id"),)
+    __table_args__ = (
+        # v1.4 신규: RESPONSE_SOURCES가 (chunk_id, property_id) 복합 FK로 이
+        #   조합을 참조하기 위한 후보키. chunk_id가 이미 PK라 중복방지
+        #   효과는 없다(명세서 2.14절).
+        UniqueConstraint("chunk_id", "property_id", name="uq_chunk_property_ref"),
+        Index("idx_knowledge_chunks_property", "property_id"),
+    )
 
     chunk_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     property_id: Mapped[int] = mapped_column(
