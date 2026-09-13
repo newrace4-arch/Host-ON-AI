@@ -25,10 +25,44 @@
 >    9/13 마이그레이션 ①~⑤로 이미 적용됐다.
 > 5. `base_price`의 뜻을 응답 스펙에 명시(2.3절) — **판매단위 1개의 1박
 >    요금**이며 **0이면 미설정**이라 금액을 추정하지 않는다(db_spec 4절 6번).
-> ⚠️ **v1.4로 어긋난 나머지 절은 이 판에 포함하지 않았다** — 6절 청소사진
->    (`photo_urls` → `CLEANING_TASK_PHOTOS`), 7절 `sources`
->    (→ `RESPONSE_SOURCES`), 5절 정산(요율이 `CHANNEL_FEE_RATES`로 이동),
->    3절 `UNIQUE(property_id, channel)`(→ 3컬럼). 후속 판에서 다룬다.
+> 6. **3절 — `room_id` 반영.** `POST .../channels` 요청에 선택 필드
+>    `room_id` 추가(3.2절), `GET .../channels` 응답에도 포함(3.1절).
+>    `UNIQUE(property_id, channel)` 표기를
+>    `UNIQUE NULLS NOT DISTINCT (property_id, channel, room_id)`로 정정
+>    (3절 본문·3.2절 에러 표). **변경 이력 안의 옛 표기는 그때의 기록이라
+>    고치지 않는다.**
+> 7. **3.1절 `meta` 없음의 근거를 교체**했다. v2.1은 *"숙소당 행 수 상한
+>    3"*을 근거로 삼았는데, `room_id` 추가로 상한이 **`채널 3 × 객실 수`**가
+>    되어 **그 근거가 무너졌다.** `meta`는 붙이지 않되(이 응답은 채널 카드
+>    화면의 **입력**이고, 일부만 받으면 "연동 안 됨"과 "이번 페이지에
+>    없음"을 구분할 수 없다) **재검토 조건을 "객실 수가 한 화면에 그릴 수
+>    없을 만큼 늘어나면"으로 바꿨다.**
+> 8. **6절 — 청소사진이 행이 됐다.** 응답 키를 `photo_urls`(URL 배열)에서
+>    **`photos`(객체 목록: `photo_id`·`photo_url`·`sort_order`)**로 바꾸고,
+>    **`DELETE /cleaning-task-photos/{photo_id}`를 표에 신설**했다.
+>    v1.3의 *"개별 삭제 엔드포인트는 만들지 않는다"*를 **철회한다** —
+>    그 규칙이 가리키던 `PATCH /cleaning-tasks/{id}`는 **이 문서에 없는
+>    엔드포인트**였고, 행 단위가 되면서 개별 삭제가 `DELETE` 한 줄이 됐다.
+>    **append 운용 규칙은 그대로**이며 행 INSERT로 실현된다.
+> 9. **7절 — `sources`의 원소가 객체가 됐다.** `["chunk_17"]` →
+>    `[{ "chunk_id": 17, "rank": 1 }]`. **키 이름 `sources`와 배열이라는
+>    모양은 유지**하므로 `docs/ui_wireframe.md`의 `response.sources` 참조
+>    경로는 그대로 유효하다(다만 **원소를 그리는 방식은 그 문서에서
+>    갱신해야 한다**). 청크 삭제가 CASCADE라 **`sources`가 빈 배열일 수
+>    있고 그것이 오류가 아니라는 것**을 명시했다.
+> 10. **5절 — 요율이 채널 단위로 이동.** 헤딩에 `CHANNEL_FEE_RATES` 추가.
+>    `financial-config`는 `vat_included` 하나만 남으므로 표 설명을 고치고
+>    스펙을 5.1절로 명시했다. **채널 요율 API를 5.2절에 신설**
+>    (`GET .../fee-rates`, `PATCH .../fee-rates/{channel}`).
+>    🔴 **`POST`는 만들지 않는다** — 요율 행은 채널 연결 생성 시 서버가
+>    자동으로 만든다. `400 INVALID_COMMISSION_RATE` 신규 코드(DB
+>    `CHECK(0~1)`와 짝).
+> 11. **부록 매핑 표에 신설 3개 추가**, "16개 → **19개** 테이블 전부 매핑
+>    완료"로 정정. 셋 다 기존 도메인에 붙고 새 도메인을 만들지 않는다.
+> ⚠️ **아직 남은 것**: `financial-config`·`fee-rates` 행을 **누가 언제
+>    만드는지**(5.1절), `fee_source`가 호스트 수정 후 **어떤 값이 되는지**
+>    (5.2절), 청소사진 **파일의 저장처**(6절). 셋 다 각 절에 미정으로
+>    명시했고 정산·청소 화면 구현 시점에 확정한다.
 > **v2.3→v2.4 변경 (9/10 3.3절 신설 — 누락분 9/13 소급 기록)**:
 > 1. `POST /channels/{connection_id}/sync` **응답 스펙 신규 확정**(3.3절).
 >    9/10에 구현한 뒤 같은 날 저녁 크로스체크에서 **3절 표 한 줄뿐이고
@@ -952,9 +986,23 @@ WHERE r.room_id = :room_id AND p.host_id = :current_host_id
 | POST | `/channels/{connection_id}/sync` | 수동 동기화 트리거 |
 | GET | `/channels/{connection_id}/sync-errors` | 동기화 실패 사유 조회 (sync_status=FAILED일 때) |
 
-> **중복 등록 시**: 이미 연동된 채널(동일 property_id+channel)로 다시 등록
-> 시도하면 `409 Conflict`, `code: "CHANNEL_ALREADY_CONNECTED"` 반환
-> (DB의 `UNIQUE(property_id, channel)` 제약과 일치).
+> **[v1.4] 중복 등록 시**: 이미 연동된 **같은 숙소·같은 채널·같은 객실**
+> 조합으로 다시 등록 시도하면 `409 Conflict`,
+> `code: "CHANNEL_ALREADY_CONNECTED"` 반환 (DB의
+> **`UNIQUE NULLS NOT DISTINCT (property_id, channel, room_id)`** 제약과
+> 일치).
+>
+> **독채는 채널당 하나, 호스텔은 객실별로 여러 개다.** 판매단위가
+> `PROPERTY`인 숙소는 `room_id`가 항상 `NULL`인데, `NULLS NOT DISTINCT`가
+> **NULL을 서로 같은 값으로 취급**하므로 `(숙소, 채널)`당 연결이 정확히
+> 하나로 제한된다. `ROOM`/`BED` 숙소는 객실마다 `room_id`가 달라 같은
+> 채널의 연결이 여러 개 존재할 수 있다 — 그것이 v1.4에서 `room_id`를
+> 추가한 이유다(db_spec 2.5절).
+>
+> ⚠️ `NULLS NOT DISTINCT`가 없으면 **기본 UNIQUE는 NULL을 서로 다르게
+> 취급**해 독채에 에어비앤비 연결이 2개·3개 생긴다. 제약 이름
+> (`uq_property_channel`)은 컬럼이 2개에서 3개로 늘어도 **그대로 유지**
+> 한다 — 서버가 이 이름으로 `IntegrityError`를 409로 번역한다.
 
 > **[v1.6] `GET /channels/{connection_id}/sync-errors` 응답 스펙**:
 > `CHANNEL_CONNECTIONS.last_error_message`(v1.3 신규 컬럼) 1건만 반환한다.
@@ -978,14 +1026,14 @@ WHERE r.room_id = :room_id AND p.host_id = :current_host_id
 ```json
 {
   "data": [
-    { "connection_id": 7, "channel": "AIRBNB",
+    { "connection_id": 7, "channel": "AIRBNB", "room_id": null,
       "ical_url_masked": "https://www.airbnb.com/calendar/ical/****.ics?s=****7890",
       "external_property_id": "12345678",
       "sync_status": "SYNCED",
       "last_synced_at": "2026-09-09T03:00:00Z",
       "last_error_message": null,
       "created_at": "2026-08-31T10:12:00Z" },
-    { "connection_id": 8, "channel": "BOOKING_COM",
+    { "connection_id": 8, "channel": "BOOKING_COM", "room_id": null,
       "ical_url_masked": "https://ical.booking.com/v1/export?t=****cd12",
       "external_property_id": null,
       "sync_status": "FAILED",
@@ -1001,6 +1049,7 @@ WHERE r.room_id = :room_id AND p.host_id = :current_host_id
 |---|---|---|
 | `connection_id` | `CHANNEL_CONNECTIONS.connection_id` | `DELETE /channels/{id}`·`POST /channels/{id}/sync` 호출 키 |
 | `channel` | `.channel` | `AIRBNB` / `BOOKING_COM` / `NAVER` 3값 |
+| `room_id` | `.room_id` | **[v1.4] nullable.** `null`이면 숙소 전체 피드(독채는 항상 `null`). 값이 있으면 그 객실의 리스팅 피드다. 화면은 이 값으로 `GET /properties/{id}/rooms`의 `room_name`을 찾아 카드에 표시한다 |
 | `ical_url_masked` | `.ical_url`의 **마스킹 표현** | 원본을 그대로 내리지 않는다 — 아래 별도 항목 참조 |
 | `external_property_id` | `.external_property_id` | nullable. OTA 측 숙소 식별자 |
 | `sync_status` | `.sync_status` | `SYNCING` / `SYNCED` / `FAILED` / `STALE` 4값 |
@@ -1015,18 +1064,29 @@ WHERE r.room_id = :room_id AND p.host_id = :current_host_id
 0절 규약상 `meta`는 `page`·`size`를 지원하는 컬렉션에만 붙는다. 이
 엔드포인트는 지원하지 않으므로 `meta`도 없다.
 
-> **근거는 "건수가 적어서"가 아니라 구조적 상한이다.** `channel_enum`은
-> 값이 3개(`AIRBNB`/`BOOKING_COM`/`NAVER`)이고 DB에
-> `UNIQUE(property_id, channel)`이 걸려 있어(DB명세서 2.5절, "MVP: 채널당
-> 연결 1개로 제한") **숙소당 행 수의 상한이 3으로 고정**된다. 페이지를
-> 나눌 대상 자체가 생길 수 없다.
+> **[v1.4] 근거를 바꿔 적는다 — "상한 3"은 더 이상 사실이 아니다.**
+> v2.1은 `channel_enum` 3값 × `UNIQUE(property_id, channel)`에서
+> *"숙소당 행 수의 상한이 3으로 고정"*을 도출했다. 그런데 v1.4에서
+> `room_id`가 추가되고 제약이
+> `UNIQUE NULLS NOT DISTINCT (property_id, channel, room_id)`로 바뀌면서
+> **상한이 `채널 3 × 객실 수`가 됐다.** 객실이 10개인 호스텔이라면 30까지
+> 가능하다. 그 근거는 무너졌다.
 >
-> 또한 `/settings` 채널연동 탭은 3개 채널의 연동 여부를 **한 화면에 모두**
-> 보여주므로(`docs/ui_design.md` 2-11·4-11절), 일부만 받으면 "연동 안 됨"과
-> "이번 페이지에 없음"을 구분할 수 없게 된다. `GET /properties`와 같은
-> 계열의 예외다.
+> **그럼에도 `meta`를 붙이지 않는다.** 남는 근거는 v2.1이 이미 적어 둔
+> 두 번째 것이고, 그것은 `room_id` 추가로 무너지지 않는다 —
+> `/settings` 채널연동 탭은 **연동 상태를 한 화면에 모두** 보여주므로
+> (`docs/ui_design.md` 2-11·4-11절), 일부만 받으면 **"연동 안 됨"과
+> "이번 페이지에 없음"을 구분할 수 없다.** 이 응답은 목록을 넘기며 읽는
+> 대상이 아니라 **채널 카드 화면의 입력**이다. `GET /properties`·2.1·2.2절과
+> 같은 계열의 예외다.
 >
-> 향후 `channel_enum`에 값이 대폭 추가되면 이 문장을 근거로 재검토한다.
+> 새 상한도 실무적으로는 작다 — 이 프로젝트가 대상으로 삼는 1인
+> 멀티호스트의 호스텔은 객실이 수십 개 규모이고, 그 전부를 받아도 한
+> 화면에 그릴 수 있다.
+>
+> **재검토 조건이 바뀌었다.** 이전에는 *"`channel_enum`에 값이 대폭
+> 추가되면"*이었으나, 이제는 **객실 수가 한 화면에 그릴 수 없을 만큼
+> 늘어나면** 이 문장을 근거로 재검토한다.
 
 **`ical_url`을 원문 그대로 노출하지 않는다 (마스킹)**
 
@@ -1068,7 +1128,8 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 {
   "channel": "AIRBNB",
   "ical_url": "https://www.airbnb.com/calendar/ical/12345678.ics?s=abc1234567890",
-  "external_property_id": "12345678"
+  "external_property_id": "12345678",
+  "room_id": 14
 }
 ```
 
@@ -1077,6 +1138,28 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 | `channel` | ✅ | `.channel` | 3값 외에는 `400 INVALID_CHANNEL` |
 | `ical_url` | ✅ | `.ical_url` | 없으면 `400 ICAL_URL_REQUIRED`(v2.1 신규 코드) |
 | `external_property_id` | — | `.external_property_id` | 생략 시 `null` |
+| `room_id` | — | `.room_id` | **[v1.4 신규] 선택 필드. 생략하면 `null`**(숙소 전체 피드). **독채(`PROPERTY`)는 생략한다.** 호스텔이 **객실별 iCal 피드를 각각 등록할 때** 쓴다 — OTA는 객실마다 별도 리스팅을 만들고 **객실마다 별도 iCal URL**을 준다. ⚠️ **iCal 피드 자체는 객실을 알려주지 않으므로 호스트가 지정해야 한다**(db_spec 2.5절) |
+
+> **[v1.4] `room_id`를 잘못 지정하면 어떻게 되는가**
+>
+> | 상황 | 무엇이 막는가 | 응답 |
+> |---|---|---|
+> | **다른 숙소의 객실** id | DB 복합 FK `fk_channel_connections_room_property` `(room_id, property_id) → rooms` | **400** `INVALID_UNIT_HIERARCHY` |
+> | 존재하지 않는 객실 id | 같은 복합 FK | **400** `INVALID_UNIT_HIERARCHY` |
+> | `bookable_unit_type=PROPERTY`인 숙소에 `room_id` 지정 | 서비스 레이어 | **400** `INVALID_UNIT_HIERARCHY` |
+>
+> 셋 다 **같은 코드**다. 뜻이 같기 때문이다 — *"판매단위와 계층이
+> 어긋났다"*. 2.6절이 `PROPERTY` 숙소에 객실을 만드는 요청을 거부할 때
+> 쓴 것과 같은 코드이며, 4절 예약 생성도 같다. **여기서 404를 쓰지 않는
+> 이유**: `property_id`는 경로에 있고 이미 소유권이 검증된 상태라,
+> 남의 객실 id인지 없는 id인지가 아니라 **요청 본문이 그 숙소의 계층과
+> 맞지 않는다**는 것이 실제 문제다. 0절의 404 통일 규칙은 **경로의
+> 리소스**를 가리킬 때 적용된다.
+>
+> ⚠️ **독채에 `room_id`를 허용하지 않는 이유는 2.6절과 같다.** 그 숙소에는
+> 객실 개념 자체가 없어 `GET .../rooms`가 **빈 배열을 반환하는 것이
+> 정상**이다(2.1절). 채울 수 없는 값을 받아 두면 화면이 그 `room_id`로
+> 객실명을 찾다가 실패한다.
 
 > **`ical_url`은 DB에서 nullable인데 요청에서는 필수로 둔다.** 컬럼이
 > nullable인 것은 향후 iCal이 아닌 연동 방식을 대비한 여지이고, 지금
@@ -1093,7 +1176,7 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 
 ```json
 {
-  "data": { "connection_id": 9, "channel": "NAVER",
+  "data": { "connection_id": 9, "channel": "NAVER", "room_id": null,
             "ical_url_masked": "https://ical.naver.com/export?k=****ef34",
             "external_property_id": null,
             "sync_status": "SYNCING",
@@ -1110,7 +1193,8 @@ iCal export URL은 URL 자체가 자격증명 역할을 해서, 값을 아는 �
 |---|---|---|
 | 400 | `INVALID_CHANNEL` | `channel`이 3값이 아님 |
 | 400 | `ICAL_URL_REQUIRED` | `ical_url` 누락 또는 빈 문자열 |
-| 409 | `CHANNEL_ALREADY_CONNECTED` | 같은 `property_id`+`channel` 중복(위 3절 기존 규칙, `UNIQUE(property_id, channel)`) |
+| 400 | `INVALID_UNIT_HIERARCHY` | **[v1.4]** `room_id`가 다른 숙소의 객실이거나 존재하지 않음 / 독채에 `room_id`를 지정함(위 표) |
+| 409 | `CHANNEL_ALREADY_CONNECTED` | **[v1.4]** 같은 `property_id`+`channel`+`room_id` 중복(위 3절 규칙, `UNIQUE NULLS NOT DISTINCT (property_id, channel, room_id)`). 독채는 `room_id`가 `NULL`이라 채널당 1개로 제한된다 |
 | 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` |
 
 > **URL 유효성을 등록 시점에 검증하지 않는다.** iCal 응답을 확인하려면
@@ -1436,14 +1520,27 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 
 ---
 
-## 5. 정산 (FINANCIAL_CONFIGS / MONTHLY_SETTLEMENTS)
+## 5. 정산 (FINANCIAL_CONFIGS / CHANNEL_FEE_RATES / MONTHLY_SETTLEMENTS)
 
 | Method | Endpoint | 설명 |
 |---|---|---|
-| GET | `/properties/{property_id}/financial-config` | 수수료 설정 조회 |
-| PATCH | `/properties/{property_id}/financial-config` | 수수료율 등 설정 변경(과거 정산에 영향 없음) |
+| GET | `/properties/{property_id}/financial-config` | **[v1.4]** 숙소 설정 조회 — 남은 것은 `vat_included` 하나다 |
+| PATCH | `/properties/{property_id}/financial-config` | **[v1.4]** 〃 변경. **수수료율은 더 이상 이 경로가 아니다** |
+| GET | `/properties/{property_id}/fee-rates` | **[v1.4 신규]** 채널별 수수료율 목록 |
+| PATCH | `/properties/{property_id}/fee-rates/{channel}` | **[v1.4 신규]** 채널별 수수료율 변경(과거 정산에 영향 없음) |
 | GET | `/properties/{property_id}/settlements` | 월별 정산 목록 |
 | POST | `/properties/{property_id}/settlements/{month}/confirm` | 일괄확인(자동추정→확정) |
+
+> **[v1.4] 수수료율이 숙소 단위에서 채널 단위로 옮겨갔다.** v1.3까지는
+> `FINANCIAL_CONFIGS`에 `fee_type`·`commission_rate`·`fee_source`가 있었고,
+> 표의 `PATCH .../financial-config` 설명도 *"수수료율 등 설정 변경"*이었다.
+> 그런데 `FINANCIAL_CONFIGS.property_id`가 `UNIQUE`라 그 테이블은 **숙소당
+> 정확히 한 행**인데 `channel_enum`은 3값이고 채널 연결은 숙소당 3개까지
+> 허용된다 — **채널마다 수수료가 다른 현실을 담을 자리가 구조적으로
+> 없었다.** 요율은 "숙소의 속성"이 아니라 **"숙소×채널의 속성"**이다.
+> 세 컬럼은 `CHANNEL_FEE_RATES`로 옮겼고, `base_nightly_rate`는
+> **제거**했다(단가의 원본은 `PROPERTIES.base_price` 하나다 — 2.3절).
+> db_spec 2.7·2.19절.
 
 > **[v1.6] 정식 경로 확정**: 정산 확정 엔드포인트의 정식 경로는 위의
 > `/properties/{property_id}/settlements/{month}/confirm`이다. CLAUDE.md
@@ -1459,6 +1556,142 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > 일괄 변경하는 작업을 **하나의 DB 트랜잭션**으로 묶어 처리한다(둘 중
 > 하나만 반영되는 부분실패 방지).
 
+### 5.1 GET·PATCH /properties/{property_id}/financial-config (v2.5 [v1.4] 축소)
+
+> **남은 필드가 `vat_included` 하나뿐이라 절이 짧다.** v1.4에서 네 컬럼이
+> 빠졌기 때문이다(위 인용 블록). 짧다고 스펙을 비워 두면 9/4 규칙이 잡아낸
+> 것과 같은 상태 — *"표에 행은 있는데 스펙이 없다"* — 가 되므로 여기 적는다.
+
+```json
+// GET·PATCH 응답 200
+{ "data": { "property_id": 1, "vat_included": true }, "error": null }
+
+// PATCH 요청
+{ "vat_included": false }
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `vat_included` | `FINANCIAL_CONFIGS.vat_included` | `NOT NULL DEFAULT true`. **`PROPERTIES.base_price`가 VAT 포함 금액인가**를 뜻한다 |
+
+> ⚠️ **`vat_included`는 표시 전용이며 어떤 계산에도 쓰지 않는다.** 정산에
+> 세금계산서·부가세·회계 기능을 넣지 않는다는 원칙(CLAUDE.md)에 따라,
+> 이 값은 화면에서 *"VAT 포함가"*라고 알려주는 데까지만 쓴다. `gross_amount`
+> `fee_amount`·`net_amount` 계산에 **들어가지 않는다**(db_spec 4절 6번).
+
+> ⚠️ **이 테이블의 행을 누가 언제 만드는지가 아직 정해지지 않았다.**
+> `CHANNEL_FEE_RATES`는 채널 연결 생성 시 서버가 자동으로 만들지만
+> (5.2절), `FINANCIAL_CONFIGS`에는 그에 대응하는 규칙이 없다 — 숙소 생성 시
+> 함께 만들지, 이 `PATCH`가 처음 호출될 때 만들지가 미정이다. **정산 구현
+> 시점에 확정한다.** 그때까지 `GET`은 행이 없으면 DB 기본값과 같은
+> `{ "vat_included": true }`를 돌려준다.
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id`(0절) |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
+
+### 5.2 GET·PATCH /properties/{property_id}/fee-rates (v2.5 [v1.4] 신규 확정)
+
+> `CHANNEL_FEE_RATES`(db_spec 2.19절) 신설에 따른 새 엔드포인트다.
+> **필드는 전부 실재 컬럼이며 추가 DB 변경은 없다.**
+
+> 🔴 **`POST`를 만들지 않는다.** 요율 행은 **채널 연결을 만들 때 서버가
+> 자동으로 생성**한다 — `POST /properties/{id}/channels`가
+> `INSERT ... ON CONFLICT DO NOTHING`으로 `(property_id, channel)` 행이
+> 없으면 기본값으로 만들고 **있으면 그대로 둔다**(v1.4 ⑤). 호스트가 요율
+> 행을 직접 만드는 것이 아니라 **이미 있는 행의 값을 고치는 것**이므로
+> `PATCH`만 있으면 된다.
+>
+> 만들 수 있게 두면 연결 없는 채널의 요율이 임의로 생기고, 그 행이 자동
+> 생성과 충돌한다. *"연결이 없는 채널의 요율 행이 남아 있는 것"* 자체는
+> 정상이지만(연결을 지워도 요율은 남는다 — db_spec 2.19절), 그것은 **한때
+> 연결이 있었다는 기록**이지 호스트가 미리 만들어 두는 값이 아니다.
+
+**GET — 채널별 요율 목록**
+
+```json
+{
+  "data": [
+    { "channel": "AIRBNB", "fee_type": "SINGLE_FEE",
+      "commission_rate": "0.1550", "fee_source": "system_default_2026",
+      "connected": true },
+    { "channel": "BOOKING_COM", "fee_type": "SINGLE_FEE",
+      "commission_rate": "0.1800", "fee_source": "host_confirmed",
+      "connected": false }
+  ],
+  "error": null
+}
+```
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `channel` | `CHANNEL_FEE_RATES.channel` | **경로 키다.** `PATCH .../fee-rates/{channel}`의 `{channel}`이 이 값이다 |
+| `fee_type` | `.fee_type` | `SPLIT_FEE` / `SINGLE_FEE`. 기본값 `SINGLE_FEE`(2026.5.25 한국 단일수수료 기준) |
+| `commission_rate` | `.commission_rate` | `NUMERIC(5,4)`. **문자열로 직렬화한다** — 부동소수로 바꾸면 `0.1550`이 `0.15499999…`가 되어 화면에 그대로 나온다 |
+| `fee_source` | `.fee_source` | 이 요율을 어디서 얻었는가. 아래 별도 항목 |
+| `connected` | **파생** | `CHANNEL_CONNECTIONS`에 이 `(property_id, channel)` 연결이 살아 있는가. DB 컬럼이 아니라 조회 시 계산한다(4절 `is_conflict`와 같은 취급) |
+
+> **`channel_fee_rate_id`와 `property_id`는 응답에 넣지 않는다.** 앞의 것은
+> `PATCH` 경로가 `{channel}`을 쓰므로 필요 없고, 뒤의 것은 경로에 이미 있다.
+> `created_at`도 쓰는 화면이 없다(2.1절과 같은 규칙).
+
+> **`connected`가 `false`인 행이 정상이다.** 요율은
+> `CHANNEL_CONNECTIONS`가 아니라 `PROPERTIES`에 걸려 있어, 연결을 해제해도
+> 남는다. iCal URL을 바꾸려면 `DELETE` 후 다시 `POST`해야 하는데(3절에
+> `PATCH`가 없다), 요율을 연결에 매달면 **URL을 한 번 바꿀 때마다 호스트가
+> 입력한 수수료율이 함께 사라진다**(db_spec 2.19절). 화면은 이 행을 지우지
+> 말고 "연동 안 됨"으로 표시한다.
+
+**PATCH — 요율 변경**
+
+```json
+// Request  (PATCH /properties/1/fee-rates/BOOKING_COM)
+{ "commission_rate": "0.1800", "fee_type": "SINGLE_FEE" }
+
+// Response 200 — 갱신된 행 1건
+{ "data": { "channel": "BOOKING_COM", "fee_type": "SINGLE_FEE",
+            "commission_rate": "0.1800", "fee_source": "host_confirmed",
+            "connected": false },
+  "error": null }
+```
+
+| 필드 | 수정 | 비고 |
+|---|---|---|
+| `commission_rate` | ✅ | **0 이상 1 이하.** DB `CHECK(ck_channel_fee_rate_range)`와 짝을 이룬다 |
+| `fee_type` | ✅ | `SPLIT_FEE` / `SINGLE_FEE` |
+| `fee_source` | ❌ | **서버가 정한다** — 아래 |
+| `channel` | ❌ | 경로에 있다. 바꾸는 것은 다른 행을 고치는 것이다 |
+
+> ⚠️ **요율은 비율이지 퍼센트가 아니다.** 15.5%는 `0.1550`이며 `15.5`가
+> 아니다. `NUMERIC(5,4)`는 `9.9999`까지 담기므로 타입만으로는 막히지 않아
+> DB에 `CHECK (commission_rate >= 0 AND commission_rate <= 1)`가 걸려 있다.
+> 잘못 넣으면 **수수료가 매출의 15.5배**가 된다. 화면은 `%` 단위로 입력받고
+> 서버에 보내기 전에 100으로 나누는 편이 안전하다.
+
+> ⚠️ **`fee_source`가 무슨 값으로 바뀌는지는 아직 정의되지 않았다.**
+> 기본값 `'system_default_2026'`은 **"호스트가 확인하지 않은 시스템
+> 기본값"**을 뜻하고, 화면은 그 상태를 추정치로 표시해 확정치처럼 보이지
+> 않게 한다. 호스트가 요율을 고치면 **다른 값이 되어야 한다**는 것까지는
+> 정해졌으나(db_spec 2.19절), **그 값의 목록이나 형식은 정하지 않았다.**
+> 위 예시의 `host_confirmed`는 **설명을 위한 가정이며 확정된 값이 아니다.**
+> 정산 화면 구현 시점에 확정한다 — 그때 이 문단을 값 목록으로 대체한다.
+
+> **과거 정산에는 영향이 없다.** `MONTHLY_SETTLEMENTS.applied_commission_rate`가
+> 정산 시점의 요율을 값으로 복사해 보관하고(3번 원칙), 예약의 `fee_amount`도
+> **생성 시점의 스냅샷**이다(db_spec 4절 6번). 요율을 바꿔도 **소급하지
+> 않는다.**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `INVALID_COMMISSION_RATE` | **[v2.5 신규]** `commission_rate`가 0 미만이거나 1 초과(DB `CHECK`와 짝) |
+| 400 | `INVALID_CHANNEL` | 경로의 `{channel}`이 3값이 아님(3절 코드 재사용) |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id` / **그 숙소에 해당 채널의 요율 행이 없음**(연결을 한 번도 만든 적이 없는 채널) |
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 무효 |
+
+> **요율 행이 없을 때 404인 이유**: `POST`가 없으므로 이 `PATCH`는 만들 수
+> 없다. 채널을 먼저 연결하면 서버가 행을 만들고, 그 뒤에 고칠 수 있다.
+
 ---
 
 ## 6. 청소 (CLEANING_TASKS)
@@ -1467,7 +1700,8 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 |---|---|---|
 | GET | `/properties/{property_id}/cleaning-tasks` | 청소작업 목록 |
 | PATCH | `/cleaning-tasks/{task_id}/status` | 상태 전이(PENDING→...→VERIFIED) |
-| POST | `/cleaning-tasks/{task_id}/photo` | 완료사진 업로드 |
+| POST | `/cleaning-tasks/{task_id}/photo` | 완료사진 업로드(행 1건 추가) |
+| DELETE | `/cleaning-task-photos/{photo_id}` | **[v1.4 신규]** 완료사진 1장 삭제 |
 
 > 청소작업은 `reservation_id`당 자동 1건 생성(예약이 CONFIRMED로
 > 전이되는 즉시 서버가 자동 트리거, `scheduled_at`=해당 예약의
@@ -1476,20 +1710,72 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > ※ 이 컬럼은 v1.3에서 `scheduled_date` → `scheduled_at`으로 개명됐다
 > (타입은 `TIMESTAMPTZ` 그대로). 응답 JSON 키도 `scheduled_at`을 쓴다.
 
-> **[v1.6] `POST /cleaning-tasks/{task_id}/photo` 동작 규칙**: 업로드된
-> 사진 URL을 `CLEANING_TASKS.photo_urls`(JSONB 배열, v1.3 신규) **끝에
-> append**한다. 기존 배열을 교체하지 않는다 — 청소 구역을 나눠 여러 장
-> 올리는 실제 운영 패턴을 지원하기 위함. 응답은 갱신된 전체 배열을
-> 돌려준다.
+> **[v1.4] `POST /cleaning-tasks/{task_id}/photo` 동작 규칙 — 저장 형태만
+> 바뀐다.** v1.3까지는 `CLEANING_TASKS.photo_urls`(JSONB 배열) **끝에
+> append**했다. v1.4에서 그 컬럼이 사라지고 **`CLEANING_TASK_PHOTOS`의
+> 행**이 됐다(db_spec 2.18절).
+>
+> **append라는 운용 규칙은 그대로다.** 기존 사진을 교체하지 않고 **행을
+> 하나 INSERT**하는 것으로 같은 결과가 된다 — 청소 구역을 나눠 여러 장
+> 올리는 실제 운영 패턴을 그대로 지원한다. 응답은 그 `task_id`의 **전체
+> 목록을 `sort_order` 순으로** 돌려준다.
 > ```json
 > { "data": { "task_id": 88,
->             "photo_urls": ["https://.../living.jpg", "https://.../bath.jpg"] },
+>             "photos": [
+>               { "photo_id": 501, "photo_url": "https://.../living.jpg", "sort_order": 0 },
+>               { "photo_id": 502, "photo_url": "https://.../bath.jpg",   "sort_order": 1 }
+>             ] },
 >   "error": null }
 > ```
-> 사진 삭제가 필요하면 `PATCH /cleaning-tasks/{id}`로 배열 전체를
-> 덮어쓰는 방식으로 처리한다(개별 삭제 엔드포인트는 만들지 않음).
+> **키 이름이 `photo_urls`에서 `photos`로 바뀐다.** 원소가 URL 문자열이
+> 아니라 객체이므로 이름을 그대로 두면 내용과 어긋난다.
+>
+> | 필드 | 출처 | 비고 |
+> |---|---|---|
+> | `photo_id` | `CLEANING_TASK_PHOTOS.photo_id` | **삭제 호출 키**다. 이것이 없으면 개별 삭제를 할 수 없다 |
+> | `photo_url` | `.photo_url` | `NOT NULL` |
+> | `sort_order` | `.sort_order` | `NOT NULL DEFAULT 0`. 화면 표시 순서이며 **정렬 기준**이다. 서버가 목록을 이 순서로 돌려주지만, 프론트가 순서를 다시 쓰거나 드래그로 바꿀 수 있으므로 값 자체를 내린다 |
+>
+> ⚠️ **파일 자체를 어디에 저장할지는 아직 정하지 않았다.** 이 테이블은
+> **URL 문자열만** 보관한다. **Render 무료 플랜의 디스크는 후보가 아니다** —
+> 인스턴스가 재시작·슬립 복귀할 때마다 초기화된다. 결정 시점은 청소 화면
+> 구현 전이며, 그때까지는 시드 데이터의 정적 URL을 담는다(db_spec 2.18절).
+
+> **[v1.4 신규] `DELETE /cleaning-task-photos/{photo_id}` — 사진 1장 삭제**
+>
+> v1.3까지는 *"삭제가 필요하면 배열 전체를 덮어쓴다(개별 삭제 엔드포인트는
+> 만들지 않음)"*였다. **그 문장을 철회한다.** 이유가 두 가지다.
+>
+> 1. **그 방식이 가리키던 `PATCH /cleaning-tasks/{id}`는 이 문서에 없는
+>    엔드포인트였다.** 6절 표에 있는 `PATCH`는 `/status` 하나뿐이다.
+>    즉 v1.3의 규칙은 **실행할 수 없는 절차**를 적고 있었다.
+> 2. **행 단위가 되면서 개별 삭제가 `DELETE ... WHERE photo_id = ?` 한
+>    줄이 됐다**(db_spec 2.18절이 이를 "덤으로 얻는 것"으로 적는다).
+>    배열 전체 덮어쓰기는 **잘못 보내면 나머지 사진이 통째로 사라지는**
+>    방식이었고, 동시에 두 장을 올리는 중이면 한쪽이 지워진다.
+>
+> ```json
+> { "data": { "photo_id": 502, "deleted": true }, "error": null }
+> ```
+>
+> **소유권 검증**: 이 경로에는 `property_id`가 없다. 0절 규칙에 따라
+> 조회 자체에 소유권 조건을 묶는다.
+>
+> ```sql
+> SELECT p.* FROM cleaning_task_photos p
+> JOIN cleaning_tasks c ON p.task_id = c.task_id
+> JOIN properties pr ON c.property_id = pr.property_id
+> WHERE p.photo_id = :photo_id AND pr.host_id = :current_host_id
+> ```
+>
+> 결과가 없으면 부존재와 타인 소유를 구분하지 않고 `404 RESOURCE_NOT_FOUND`다.
+> **파일 실체는 지우지 않는다** — 저장처가 미정이라 지울 대상이 정해져
+> 있지 않다. 행만 지우며, 저장처를 정할 때 실제 파일 정리 정책을 함께
+> 확정한다.
+
 > `VERIFIED` 전이는 호스트의 확인 행위로 결정되며 사진 0장이어도 가능하되,
-> UI에서 "사진 없음" 경고를 표시한다.
+> UI에서 "사진 없음" 경고를 표시한다. **[v1.4] "사진 0장"의 뜻이 바뀌었다** —
+> 이제 *"이 `task_id`를 가진 행이 0건"*이다(빈 배열이 아니다).
 
 ---
 
@@ -1537,7 +1823,10 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
       "response_text": "The Wi-Fi password is...",
       "detected_language": "en",
       "is_latest": true,
-      "sources": ["chunk_17"]
+      "sources": [
+        { "chunk_id": 17, "rank": 1 },
+        { "chunk_id": 42, "rank": 2 }
+      ]
     },
     "auto_sent": true
   },
@@ -1547,6 +1836,41 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 > `response_text`는 이미 게스트 언어(`detected_language`)로 번역된
 > 최종 답변이다(Claude 1회 호출에서 다국어 응답까지 동시 생성하므로
 > 별도 번역 API 불필요, DB명세서 AI아키텍처 원칙과 일치).
+
+> **[v1.4] `sources`의 원소가 문자열에서 객체로 바뀐다.**
+>
+> v1.3까지는 `INQUIRY_RESPONSES.sources`(JSONB)에 `["chunk_17"]` 형태로
+> 담겨 있던 것을 그대로 내보냈다. v1.4에서 그 컬럼이 사라지고
+> **`RESPONSE_SOURCES` 테이블의 행**이 됐다(db_spec 2.17절).
+>
+> **키 이름 `sources`는 유지한다.** 조인 결과를 배열로 돌려주면 되므로
+> 응답의 **모양**(`response.sources`가 배열)은 그대로다.
+> `docs/ui_wireframe.md`의 *근거(RAG 출처)* 항목이 `response.sources`를
+> 참조하는데, 그 경로는 계속 유효하다.
+>
+> **원소는 바꾼다.** 두 가지 이유다.
+> 1. `"chunk_17"`은 **접두사가 붙은 문자열**이라 클라이언트가 파싱해야
+>    id를 얻는다. 실제 컬럼은 `BIGINT chunk_id`이고, 이제 FK가 걸려
+>    있으므로(`fk_response_sources_chunk_property`) 그 값을 그대로 내보내는
+>    것이 맞다.
+> 2. **`rank`가 생겼다.** v1.3에서는 순위가 "배열 순서"라는 암묵 규약에만
+>    의존했고, 그 규약은 어디에도 적혀 있지 않았다. 이제 DB에 값이 있으므로
+>    명시한다(`1`이 가장 유사).
+>
+> | 필드 | 출처 | 비고 |
+> |---|---|---|
+> | `chunk_id` | `RESPONSE_SOURCES.chunk_id` | `KNOWLEDGE_CHUNKS`를 가리킨다. 화면이 근거 원문을 보여주려면 8절로 별도 조회한다 |
+> | `rank` | `.rank` | RAG 검색 결과 순위(`1`이 가장 유사). 배열은 이 순서로 정렬해 내린다 |
+>
+> ⚠️ **`sources`가 빈 배열일 수 있다.** 청크 삭제가 `ON DELETE CASCADE`라
+> 호스트가 하우스룰을 고치면(지식 청크는 수정 API가 없어 "지우고 다시
+> 등록"이 유일한 경로 — 8절) **그 청크를 인용한 기록이 함께 사라진다.**
+> `response_text`는 그대로 남으므로, 화면에는 **답변은 있는데 근거가
+> 0건**인 상태가 나타난다. 이것을 오류로 처리하지 않는다(db_spec 2.17절).
+>
+> **`property_id`는 응답에 넣지 않는다** — `RESPONSE_SOURCES`에 그 컬럼이
+> 있는 것은 응답과 청크가 같은 숙소임을 두 복합 FK가 함께 보장하기
+> 위해서이고, 클라이언트가 쓸 값이 아니다.
 
 > **재시도 횟수 검증(정확한 계산식)**: `regenerate` 호출 시, 새 레코드를
 > 만들기 **전에** 해당 `inquiry_id`의 기존 `INQUIRY_RESPONSES` 레코드
@@ -1865,12 +2189,16 @@ ORDER BY risk_level ASC, created_at DESC
 | 숙소관리 | PROPERTIES, ROOMS, BEDS |
 | 채널연동 | CHANNEL_CONNECTIONS |
 | 예약 | RESERVATIONS |
-| 정산 | FINANCIAL_CONFIGS, MONTHLY_SETTLEMENTS |
-| 청소 | CLEANING_TASKS |
-| AI응대 | INQUIRIES, INQUIRY_CLASSIFICATIONS, INQUIRY_RESPONSES, INQUIRY_APPROVALS |
+| 정산 | FINANCIAL_CONFIGS, **CHANNEL_FEE_RATES**, MONTHLY_SETTLEMENTS |
+| 청소 | CLEANING_TASKS, **CLEANING_TASK_PHOTOS** |
+| AI응대 | INQUIRIES, INQUIRY_CLASSIFICATIONS, INQUIRY_RESPONSES, INQUIRY_APPROVALS, **RESPONSE_SOURCES** |
 | RAG | KNOWLEDGE_CHUNKS |
 | 알림 | ACTION_ITEMS |
 | 동적 가격조정 | ACTION_ITEMS(`category='PRICE_ADJUSTMENT'`/`'PRICE_NEGLECT'`) + PROPERTIES(`lower_bound_price`, `*_adjustment_enabled`) — **전용 테이블 없음** |
 | 컴플라이언스 | CHECKLIST_ITEMS |
 
-**16개 테이블 전부 매핑 완료.**
+**19개 테이블 전부 매핑 완료.** 굵게 표시한 셋이 v1.4 신설분이다
+(`RESPONSE_SOURCES` 2.17 · `CLEANING_TASK_PHOTOS` 2.18 ·
+`CHANNEL_FEE_RATES` 2.19). 세 테이블 모두 **기존 도메인에 붙으며 새
+도메인을 만들지 않는다** — JSONB 배열이나 숙소 단위 컬럼으로 담고 있던
+것을 행으로 푼 것이기 때문이다.
