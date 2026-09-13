@@ -31,7 +31,14 @@ class ReservationCreateRequest(BaseModel):
     reservation_status: ReservationStatus = ReservationStatus.CONFIRMED
     gross_amount: int | None = None
     fee_amount: int | None = None
-    net_amount: int | None = None
+    # ⚠️ [v1.4] net_amount는 **요청에서 받지 않는다.** DB 생성 컬럼
+    #    (GENERATED ALWAYS AS (gross_amount - fee_amount) STORED)이라
+    #    INSERT에 실리는 순간 PostgreSQL이 거부한다. 이 클래스는
+    #    reservation_service에서 Reservation(**payload.model_dump())로
+    #    통째로 펼쳐지므로, 기본값 None이라도 필드가 남아 있으면
+    #    model_dump()에 포함돼 예약 생성 경로 전체가 깨진다.
+    #    응답(ReservationResponse)에는 그대로 남는다 — 읽기는 정상이다.
+    #    gross/fee는 유지한다: 4절 정책 6이 서비스가 계산해 저장한다고 정했다.
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ReservationCreateRequest":

@@ -15,6 +15,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -157,7 +158,20 @@ class Reservation(Base):
     fee_amount: Mapped[int | None] = mapped_column(Integer)
     # ⚠️ 예약 건별 금액은 net_amount, 월정산 금액은 MONTHLY_SETTLEMENTS.net_payout.
     #    이름을 혼동하지 말 것(명세서 v1.3 체크포인트 6번).
-    net_amount: Mapped[int | None] = mapped_column(Integer)
+    # ⚠️ **[v1.4] DB가 계산한다. 값을 대입하지 마라.**
+    #    INTEGER GENERATED ALWAYS AS (gross_amount - fee_amount) STORED —
+    #    INSERT/UPDATE에 이 컬럼을 실으면 PostgreSQL이
+    #    "cannot insert a non-DEFAULT value into column net_amount"로 거부한다.
+    #    그래서 ReservationCreateRequest에서 이 필드를 지웠다(v1.4 ④) —
+    #    reservation_service가 Reservation(**payload.model_dump())로 모델을
+    #    만들기 때문에, 기본값 None이라도 남아 있으면 INSERT에 실려 전체
+    #    예약 생성 경로가 깨진다.
+    #    gross/fee 중 하나라도 NULL이면 net도 NULL이 된다(명세서 2.6절).
+    #    persisted=True는 **필수**다 — PostgreSQL은 17까지 STORED만 지원하며,
+    #    생략하면 VIRTUAL로 렌더링돼 실패한다.
+    net_amount: Mapped[int | None] = mapped_column(
+        Integer, Computed("gross_amount - fee_amount", persisted=True)
+    )
     expected_settlement_at: Mapped[date | None] = mapped_column(Date)
     actual_settlement_at: Mapped[date | None] = mapped_column(Date)
     host_confirmation_required: Mapped[bool] = mapped_column(
