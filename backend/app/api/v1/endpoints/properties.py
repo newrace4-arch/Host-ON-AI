@@ -28,15 +28,17 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_host_id
 from app.schemas.property import (
     BedResponse,
+    PropertyCreateRequest,
     PropertyDetailResponse,
     PropertySummaryResponse,
+    PropertyUpdateRequest,
     RoomResponse,
 )
 from app.services import property_service
@@ -99,5 +101,50 @@ async def list_beds(
     beds = await property_service.list_beds(db, room_id=room_id, host_id=host_id)
     return {
         "data": [BedResponse.model_validate(b).model_dump() for b in beds],
+        "error": None,
+    }
+
+
+@router.post(
+    "/properties",
+    status_code=status.HTTP_201_CREATED,
+    summary="숙소 등록(온보딩 STEP 1)",
+)
+async def create_property(
+    payload: PropertyCreateRequest, db: DbSession, host_id: CurrentHostId
+) -> dict[str, Any]:
+    """**201**이고 응답은 목록의 4필드가 아니라 **상세와 같은 11필드**다(2.3절).
+
+    등록 직후 온보딩 위저드가 방금 만든 숙소의 전체 상태를 그려야 한다 —
+    목록 형태로 돌려주면 클라이언트가 `GET /properties/{id}`를 곧바로 한 번
+    더 호출하게 된다.
+    """
+    prop = await property_service.create_property(db, host_id=host_id, payload=payload)
+    await db.commit()
+    return {
+        "data": PropertyDetailResponse.model_validate(prop).model_dump(),
+        "error": None,
+    }
+
+
+@router.patch("/properties/{property_id}", summary="숙소 정보 수정(/settings)")
+async def update_property(
+    property_id: int,
+    payload: PropertyUpdateRequest,
+    db: DbSession,
+    host_id: CurrentHostId,
+) -> dict[str, Any]:
+    """보낸 필드만 바꾸고 **갱신 후 전체 11필드**를 돌려준다(2.5절).
+
+    `accommodation_type`·`bookable_unit_type`이 담겨 오면
+    **400 `IMMUTABLE_FIELD`**다 — 무시하지 않는다. 빈 본문은 에러가 아니라
+    현재 상태를 그대로 돌려주는 `200`이다.
+    """
+    prop = await property_service.update_property(
+        db, property_id=property_id, host_id=host_id, payload=payload
+    )
+    await db.commit()
+    return {
+        "data": PropertyDetailResponse.model_validate(prop).model_dump(),
         "error": None,
     }

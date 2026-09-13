@@ -19,8 +19,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ResourceNotFoundError
+from app.core.exceptions import ImmutableFieldError, ResourceNotFoundError
 from app.models.property import Bed, Property, Room
+from app.schemas.property import PropertyCreateRequest, PropertyUpdateRequest
 from app.services.reservation_service import get_owned_property
 
 
@@ -109,3 +110,99 @@ async def list_beds(db: AsyncSession, *, room_id: int, host_id: int) -> list[Bed
     await get_owned_room(db, room_id, host_id)
     stmt = select(Bed).where(Bed.room_id == room_id).order_by(Bed.bed_id)
     return list((await db.scalars(stmt)).all())
+
+
+# `PATCH`가 거부하는 필드. **값이 아니라 존재 여부**로 판정한다(2.5절).
+#   두 값은 바꾸는 순간 이미 쌓인 데이터가 어긋난다 —
+#   `accommodation_type`은 10절 컴플라이언스 체크리스트 항목이 여기서
+#   파생되고, `bookable_unit_type`은 4절 400 3종의 판정 기준이라
+#   PROPERTY → ROOM으로 바꾸면 과거 예약이 전부 규칙 위반 상태가 된다.
+_IMMUTABLE_FIELDS = ("accommodation_type", "bookable_unit_type")
+
+
+async def create_property(
+    db: AsyncSession, *, host_id: int, payload: PropertyCreateRequest
+) -> Property:
+    """숙소 등록(api_contract 2.3절). 응답은 **상세와 같은 11필드**다.
+
+    **소유자는 JWT에서 온다** — 요청 본문의 `host_id`를 쓰지 않는다.
+
+    ⚠️ **보내지 않은 필드를 `None`으로 넣지 않는다.** `base_price`·
+    `checkin_time`·`checkout_time`·두 스위치는 `NOT NULL DEFAULT`가 걸려
+    있어, `None`을 명시적으로 실어 보내면 **DB 기본값이 적용되지 않고
+    NOT NULL 위반**이 난다. 그래서 `model_fields_set`에 있는 것만 세팅하고
+    나머지는 컬럼을 아예 INSERT에서 빼 서버 기본값이 채우게 둔다.
+
+    그 결과가 2.3절이 적은 등록 직후 상태다 — `base_price` `0`(= **미설정**,
+    "0원"이 아니다), `checkin_time` `"15:00"`, `checkout_time` `"11:00"`,
+    두 스위치 `true`, `address`·`lower_bound_price`는 `null`.
+    """
+    prop = Property(
+        host_id=host_id,
+        name=payload.name,
+        accommodation_type=payload.accommodation_type,
+        bookable_unit_type=payload.bookable_unit_type,
+    )
+    for field in (
+        "address",
+        "base_price",
+        "lower_bound_price",
+        "checkin_time",
+        "checkout_time",
+        "weekday_adjustment_enabled",
+        "holiday_adjustment_enabled",
+    ):
+        if field in payload.model_fields_set:
+            setattr(prop, field, getattr(payload, field))
+
+    db.add(prop)
+    await db.flush()
+    # 서버 기본값(base_price 0, checkin_time 15:00 ...)은 INSERT 뒤에야
+    #   값이 생긴다. 응답이 11필드 전부를 담아야 하므로 여기서 읽어 온다.
+    await db.refresh(prop)
+    return prop
+
+
+async def update_property(
+    db: AsyncSession,
+    *,
+    property_id: int,
+    host_id: int,
+    payload: PropertyUpdateRequest,
+) -> Property:
+    """숙소 수정(api_contract 2.5절). 응답은 갱신 후 **전체 11필드**다.
+
+    **판정 순서가 뒤바뀌면 안 된다** — 소유권(404)을 먼저 보고, 통과한
+    뒤에만 수정 불가 필드(400)를 본다. 9/13 `room_id` 404/400 분리에서
+    정한 것과 같은 순서다. 반대로 하면 남의 숙소에 대해서도 `400`이 나가
+    *"그 id는 존재한다"*는 사실이 새어 나간다.
+
+    🔴 **`accommodation_type`·`bookable_unit_type`은 무시하지 않고 거부한다**
+    (2.5절). 받아서 조용히 버리면 호스트는 바뀐 줄 알고 화면을 떠난다.
+    판정은 **값이 아니라 존재 여부**다 — `null`을 보내도 "바꾸려 했다"로
+    본다. 요청 스키마가 그 둘을 `Any`로 두고 있어 어떤 값이 와도 여기까지
+    온다(schemas/property.py 참고).
+
+    **빈 본문(`{})`은 에러가 아니다.** 2.5절이 *"바꿀 것이 없다는 뜻이므로
+    현재 상태를 그대로 `200`으로 돌려준다"*고 정했다 — 우리가 고를 문제가
+    아니라 스펙이 확정한 동작이다. `model_fields_set`이 비면 아무것도
+    세팅하지 않고 조회 결과를 그대로 반환한다.
+
+    **보낸 필드만 바꾼다.** `None`인 것과 보내지 않은 것을 구분해야 하므로
+    `model_fields_set`으로 판정한다 — `address: null`은 *"지운다"*이고
+    `address` 미전송은 *"그대로 둔다"*라 뜻이 정반대다(2.5절).
+    """
+    prop = await get_owned_property(db, property_id, host_id)
+
+    blocked = [f for f in _IMMUTABLE_FIELDS if f in payload.model_fields_set]
+    if blocked:
+        raise ImmutableFieldError(
+            f"다음 필드는 수정할 수 없습니다: {', '.join(blocked)}. "
+            "숙박업 유형과 판매단위를 바꾸려면 숙소를 새로 등록해야 합니다."
+        )
+
+    for field in payload.model_fields_set - set(_IMMUTABLE_FIELDS):
+        setattr(prop, field, getattr(payload, field))
+
+    await db.flush()
+    return prop

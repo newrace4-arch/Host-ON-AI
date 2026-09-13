@@ -66,6 +66,27 @@ class InvalidUnitHierarchyError(AppError):
     code = "INVALID_UNIT_HIERARCHY"
 
 
+class ImmutableFieldError(AppError):
+    """수정할 수 없는 필드를 바꾸려 했다(400, api_contract 2.5절).
+
+    `PROPERTIES.accommodation_type`·`bookable_unit_type`이 대상이다.
+
+    🔴 **요청에 담겨 오면 조용히 무시하지 않고 거부한다.** 받아서 버리면
+    호스트는 바뀐 줄 알고 화면을 떠난다. 그래서 요청 스키마에서 필드를
+    **빼지 않고** 두되, 서비스가 이 예외를 던지는 형태여야 한다 — 스키마에서
+    빼면 Pydantic이 모르는 필드로 무시해 400이 나가지 않는다.
+
+    ⚠️ **`VALIDATION_ERROR`와 뜻이 다르다.** 그쪽은 *"형식이 틀렸다"*라
+    고쳐서 다시 보내면 되지만, 이것은 *"형식은 맞는데 바꿀 수 없다"*라
+    프론트가 그 입력을 **비활성화**해야 한다(api_contract 0절 v2.5 이력).
+
+    `message`에 해당 필드명을 담는다(2.5절 에러 표).
+    """
+
+    status_code = 400
+    code = "IMMUTABLE_FIELD"
+
+
 class ReservationOverlapError(AppError):
     """같은 숙소 안에서 판매단위를 넘나드는 기간 충돌(409).
 

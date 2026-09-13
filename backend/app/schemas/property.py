@@ -29,10 +29,109 @@
 from __future__ import annotations
 
 from datetime import time
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.models.enums import AccommodationType, BookableUnitType
+
+# `PATCH`에서 **명시적 `null`을 허용하는** 필드. DB가 nullable인 둘뿐이며,
+#   여기에 `null`을 보내는 것은 *"값을 지운다"*는 뜻이다(2.5절).
+#   나머지는 `NOT NULL` 컬럼이라 `null`이 곧 형식 오류다.
+_NULLABLE_ON_PATCH = frozenset({"address", "lower_bound_price"})
+
+
+class PropertyCreateRequest(BaseModel):
+    """`POST /properties` 요청 (api_contract 2절 요청 예시 + 2.3절).
+
+    **`host_id`를 받지 않는다.** 소유자는 JWT가 결정한다 — 본문으로 받으면
+    남의 id를 적어 보내는 순간 다른 호스트 앞으로 숙소가 생긴다.
+
+    `name`·`accommodation_type`·`bookable_unit_type`은 DB에서 `NOT NULL`이라
+    **요청에서도 필수**다. 누락하면 FastAPI의 본문 검증에 걸려
+    `400 VALIDATION_ERROR`가 된다(2.3절 말미).
+
+    나머지는 전부 생략 가능하며 **생략하면 DB 기본값**으로 채워진다 —
+    `base_price` `0`, `checkin_time` `"15:00"`, `checkout_time` `"11:00"`,
+    두 스위치 `true`, `address`·`lower_bound_price`는 `null`(2.3절).
+
+    ⚠️ **`base_price`에 범위 제약을 걸지 않는다.** `0`이 "미설정"이라는
+    것은 2.3절이 정했지만 **하한·상한은 어느 문서에도 없고 DB에도 CHECK가
+    없다**(`properties`의 CHECK는 0건 — 9/14 실측). 스펙에 없는 규칙을
+    구현이 만들지 않는다. `lower_bound_price`와의 대소 관계도 같은
+    이유로 검사하지 않는다(devlog 9/13 이월 — 9/24 확정).
+    """
+
+    name: str = Field(min_length=1, max_length=150)
+    accommodation_type: AccommodationType
+    bookable_unit_type: BookableUnitType
+    address: str | None = Field(default=None, max_length=255)
+    base_price: int | None = None
+    lower_bound_price: int | None = None
+    checkin_time: time | None = None
+    checkout_time: time | None = None
+    weekday_adjustment_enabled: bool | None = None
+    holiday_adjustment_enabled: bool | None = None
+
+
+class PropertyUpdateRequest(BaseModel):
+    """`PATCH /properties/{id}` 요청 (api_contract 2.5절).
+
+    **부분 수정이라 모든 필드가 Optional이다.** 보낸 필드만 바뀌고 보내지
+    않은 필드는 그대로 둔다 — "보냈는지"는 `model_fields_set`으로 본다.
+    값이 `None`인 것과 아예 보내지 않은 것을 구분해야 하기 때문이다.
+
+    🔴 **`accommodation_type`·`bookable_unit_type`을 스키마에서 빼지
+    않는다.** 빼면 Pydantic이 **모르는 필드로 조용히 무시**해 2.5절이
+    요구한 `400 IMMUTABLE_FIELD`가 나가지 않는다. 필드를 두고
+    **서비스가 거부**하는 형태여야 한다.
+
+    ⚠️ 그 둘의 타입이 `Any`인 것도 같은 이유다. `AccommodationType`으로
+    두면 잘못된 값을 보냈을 때 Pydantic이 먼저 걸어 `VALIDATION_ERROR`가
+    나간다 — **바꿀 수 없는 필드인데 "값이 틀렸다"고 답하는 셈**이라
+    프론트가 입력을 비활성화하지 못한다. 어떤 값이 와도 같은
+    `IMMUTABLE_FIELD`여야 한다.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    address: str | None = Field(default=None, max_length=255)
+    base_price: int | None = None
+    lower_bound_price: int | None = None
+    checkin_time: time | None = None
+    checkout_time: time | None = None
+    weekday_adjustment_enabled: bool | None = None
+    holiday_adjustment_enabled: bool | None = None
+
+    # 수정 불가 2필드 — 값이 아니라 **존재 여부**만 본다(위 도크스트링).
+    accommodation_type: Any = None
+    bookable_unit_type: Any = None
+
+    @model_validator(mode="after")
+    def _reject_null_on_not_null_columns(self) -> "PropertyUpdateRequest":
+        """`NOT NULL` 컬럼에 명시적 `null`을 보내는 것은 형식 오류다.
+
+        2.5절이 `null`의 뜻을 **nullable 컬럼에 한해** *"값을 지운다"*로
+        정했다(`address`·`lower_bound_price`). `name`에 `null`을 보내면
+        지울 수도 없고 바꿀 수도 없어 **조용히 무시되는 것이 최악**이다 —
+        호스트는 이름이 지워진 줄 안다.
+
+        형식 문제이므로 여기(Pydantic)에서 잡는다 → `400 VALIDATION_ERROR`.
+        업무 규칙인 `IMMUTABLE_FIELD`는 서비스가 잡는다.
+        """
+        nulled = [
+            f
+            for f in self.model_fields_set
+            if getattr(self, f) is None
+            and f not in _NULLABLE_ON_PATCH
+            and f not in ("accommodation_type", "bookable_unit_type")
+        ]
+        if nulled:
+            raise ValueError(
+                f"다음 필드는 null로 지울 수 없습니다: {', '.join(sorted(nulled))}"
+            )
+        return self
 
 
 class PropertySummaryResponse(BaseModel):
