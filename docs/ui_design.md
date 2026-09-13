@@ -228,7 +228,7 @@ Render 슬립 후 첫 상호작용 시점과도 겹쳐 웨이크업 효과가 �
 | 6 | `/inquiries` | AI 게스트 인박스 | `GET /properties/{id}/inquiries`, `GET /inquiries/{id}`, `POST /inquiries/{id}/regenerate`, `POST /inquiry-approvals/{id}/approve`, `POST /inquiry-approvals/{id}/reject` | 재시도 최대 2회(총 3회) |
 | 7 | `/actions` | 액션센터 | `GET /properties/{id}/action-items?status=OPEN`, `PATCH /action-items/{id}/resolve`, `GET /properties/{id}/price-recommendations`, `POST /properties/{id}/price-recommendations/apply` | 가격 추천 승인 포함 |
 | 8 | `/cleaning` | 청소 관리 | `GET /properties/{id}/cleaning-tasks`, `PATCH /cleaning-tasks/{id}/status`, `POST /cleaning-tasks/{id}/photo` | |
-| 9 | `/settlements` | 정산 리포트 | `GET /properties/{id}/settlements`, `POST /properties/{id}/settlements/{month}/confirm`, `GET·PATCH /properties/{id}/financial-config` | 스냅샷 정산 |
+| 9 | `/settlements` | 정산 리포트 | `GET /properties/{id}/settlements`, `POST /properties/{id}/settlements/{month}/confirm`, `GET·PATCH /properties/{id}/financial-config`, **`GET /properties/{id}/fee-rates`**, **`PATCH /properties/{id}/fee-rates/{channel}`** | 스냅샷 정산 |
 | 10 | `/knowledge` | RAG 지식베이스 | `GET·POST /properties/{id}/knowledge-chunks`, `DELETE /knowledge-chunks/{id}` | |
 | 11 | `/settings` | 설정 (4탭) | `GET·PATCH /properties/{id}`, 채널 5종, `GET /properties/{id}/checklist-items`, `PATCH /checklist-items/{id}` | 아래 상세 |
 
@@ -535,7 +535,7 @@ CLAUDE.md 원칙상 가격조정은 **전용 테이블 없이 `ACTION_ITEMS` 카
 ### 4-9. `/settlements`
 
 - **목적**: 월별 정산 확인과 일괄 확정
-- **주요 API**: `GET /properties/{id}/settlements`, `POST /properties/{id}/settlements/{month}/confirm`, `GET·PATCH /properties/{id}/financial-config`
+- **주요 API**: `GET /properties/{id}/settlements`, `POST /properties/{id}/settlements/{month}/confirm`, `GET·PATCH /properties/{id}/financial-config`, **`GET /properties/{id}/fee-rates`**, **`PATCH /properties/{id}/fee-rates/{channel}`**(v1.4 신설 — api_contract 5.2절)
 - **화면 요소**: 월 선택 / 정산 목록 / 일괄확인 버튼 / 수수료 설정
 
 | 상태 | 표시 |
@@ -1276,15 +1276,43 @@ flowchart TD
 | 검토한 안 | 결정 | 근거 |
 |---|---|---|
 | `/inquiries` 빈 상태에 **"샘플 문의 생성" 버튼** | **두지 않는다** | 실제 호스트가 쓰는 제품에 데모용 기능을 넣지 않는다. 시연 데이터는 **10/2 시드 스크립트**가 담당한다 |
-| 수수료 설정(`financial-config`)을 `/settings`로 이동 | **`/settlements` 유지** | `FINANCIAL_CONFIGS`는 `PROPERTIES`와 **별도 테이블**이라 저장 경로가 다르고, `MONTHLY_SETTLEMENTS.applied_commission_rate` 스냅샷과 **현재 설정값을 같은 화면에서 대조**해야 한다 |
+| 수수료 설정을 `/settings`로 이동 | **`/settlements` 유지** | **[v1.4 근거 갱신]** 수수료 설정은 `PROPERTIES`와 **저장 경로가 다르고**(`FINANCIAL_CONFIGS`·`CHANNEL_FEE_RATES`), `MONTHLY_SETTLEMENTS.applied_commission_rate` 스냅샷과 **현재 요율을 같은 화면에서 대조**해야 한다 |
 
-**`financial-config`가 원칙 2를 위반하지 않는 이유** (크로스체크 지적 반영)
+**수수료 설정이 원칙 2를 위반하지 않는 이유** (크로스체크 지적 반영,
+**v1.4에서 근거 갱신**)
 
-`financial-config`는 `FINANCIAL_CONFIGS` 별도 테이블이며, `/settings`
-가격정책 탭의 4개 필드(`PROPERTIES` 컬럼)와 **저장 경로가 다르다.** 또한
-`MONTHLY_SETTLEMENTS.applied_commission_rate`가 정산 시점의 수수료율을
-스냅샷으로 저장하므로, **"이 달에 적용된 율"과 "현재 설정값"을 같은 화면에서
-대조**할 수 있어야 한다.
+수수료 설정은 `/settings` 가격정책 탭의 4개 필드(`PROPERTIES` 컬럼)와
+**저장 경로가 다르다.** 또한 `MONTHLY_SETTLEMENTS.applied_commission_rate`가
+정산 시점의 수수료율을 스냅샷으로 저장하므로, **"이 달에 적용된 율"과
+"현재 요율"을 같은 화면에서 대조**할 수 있어야 한다.
+
+> **[v1.4] 대조할 "현재 요율"이 있는 곳이 바뀌었다.** v1.3까지는
+> `FINANCIAL_CONFIGS.commission_rate` 하나였으나, ⑤에서
+> `fee_type`·`commission_rate`·`fee_source`가 **`CHANNEL_FEE_RATES`로
+> 옮겨갔다**(요율은 "숙소의 속성"이 아니라 "숙소×채널의 속성"이다).
+> `FINANCIAL_CONFIGS`에는 `vat_included`만 남는다. 따라서 이 화면은
+> **두 경로를 쓴다** — `financial-config`(VAT 표시)와
+> `fee-rates`(채널별 요율, api_contract 5.2절).
+>
+> **결론은 바뀌지 않는다.** 대조해야 한다는 이유가 그대로이고, 오히려
+> **대조가 더 필요해졌다** — 아래 참고.
+
+> ⚠️ **v1.4에서 대조가 한 단계 복잡해졌다: 스냅샷은 값 하나인데 요율은
+> 채널별로 여럿이다.** `applied_commission_rate`의 뜻은 db_spec **2.8절**이
+> 정한다 — **그 달 예약이 한 채널뿐이면 그 채널의 요율, 둘 이상 섞이면
+> `NULL`**이다(대표값을 고르면 그 숫자로 역산한 금액이 실제
+> `channel_fee`와 맞지 않기 때문이다).
+>
+> 화면은 이 둘을 구분해 보여야 한다.
+>
+> | 스냅샷 | 화면 |
+> |---|---|
+> | 값이 있다(단일 채널) | 그 값과 **해당 채널의 현재 요율**을 나란히 대조 |
+> | `NULL`(채널 섞임) | **빈칸이나 0%로 표시하지 않는다.** *"여러 채널이 섞여 단일 요율이 없음"*으로 안내하고, 채널별 현재 요율 표를 대신 보여준다 |
+>
+> `NULL`을 0%로 그리면 **수수료를 안 뗀 달처럼 보인다.** 4.1절
+> `conflict_count`·2.1절 `capacity`와 같은 취급이다(`null`과 `0`을
+> 구분한다).
 
 원칙 2(조회와 처리 분리)의 대상은 **대시보드와 액션센터의 역할 분리**이며,
 정산 화면 내부에 관련 설정을 접힌 섹션으로 두는 것은 이에 해당하지 않는다.

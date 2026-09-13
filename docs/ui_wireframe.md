@@ -28,18 +28,32 @@
 
 | 표기 | 의미 |
 |---|---|
-| 필드명 그대로 | `api_contract.md` **v2.2**에 **응답 예시가 있는** 확정 필드 |
-| `[DB]` 접두 | **API 응답 스펙이 문서에 없어** DB명세서 v1.3 컬럼명을 적은 것. 응답 필드명은 구현 시 확정 |
+| 필드명 그대로 | `api_contract.md` **v2.5**에 **응답 예시가 있는** 확정 필드 |
+| `[DB]` 접두 | **API 응답 스펙이 문서에 없어** DB명세서 컬럼명을 적은 것. 응답 필드명은 구현 시 확정 |
 
 > **9/8 재검토**: 이 표기는 9/7에 v1.9 기준으로 붙였다. 이후 v2.0이
 > `action-items`를, v2.1이 `rooms`·`beds`·`channels`를 확정하면서
 > `[DB]`였던 **6곳이 확정 필드로 승격**됐다. 버전 숫자만 올리면 재검토하지
 > 않은 것을 검증했다고 주장하는 셈이라, 18곳을 전수 대조한 뒤 갱신했다.
 >
-> **남은 `[DB]` 12곳**은 `knowledge-chunks`(1) · `inquiries`(2) ·
-> `settlements`(6) · `financial-config`(1) — troubleshooting 23번의
-> 미해소 4건 — 과, 요청 스펙 확정을 9/13으로 미룬 `POST /rooms`(1) ·
-> `POST /beds`(1)다.
+> **[9/13 갱신] 남은 `[DB]`는 9곳**이다 — `settlements`(6) ·
+> `inquiries`(2) · `knowledge-chunks`(1). **셋 다 troubleshooting
+> 23번의 미해소 3건과 정확히 일치한다**(그 목록의 9/13 기준 현황:
+> 7건 중 4건 해소, 남은 것 3건).
+>
+> **9/13에 3곳이 확정 필드로 승격됐다.**
+>
+> | 승격된 것 | 어디서 확정됐나 |
+> |---|---|
+> | `financial-config`(1) | api_contract **5.1절**(v2.5). ⑤에서 컬럼 4개가 빠져 `vat_included` 하나만 남았고, 짧다고 비워 두면 같은 누락이 반복되므로 함께 적었다 |
+> | `POST /rooms`(1) | api_contract **2.6절**(v2.5). *"9/13 확정한다"*고 미뤄 둔 것을 그날 확정했다 |
+> | `POST /beds`(1) | 〃 |
+>
+> ⚠️ **이 요약은 9/13에 한 번 놓쳤다.** 같은 날 아래 정산 표(수수료 설정
+> 행)는 v1.4로 고쳤는데 **이 요약 문단은 그대로 둬서**, 표와 요약이
+> 서로 다른 상태를 가리켰다. **한 사실이 같은 파일 안에 두 번 적혀
+> 있으면 한쪽만 고치기 쉽다** — 고칠 때 나머지 하나를 반드시 함께
+> 찾는다(CLAUDE.md 9/4 규칙의 파일 내부 판이다).
 
 ---
 
@@ -458,8 +472,8 @@
 |---|---|---|
 | 숙소 등록 | `POST /properties` | (요청) `name`, `accommodation_type`, `bookable_unit_type`, `address`, `base_price`, `checkin_time`, `checkout_time`, `weekday_adjustment_enabled`, `holiday_adjustment_enabled` |
 | 숙박업 유형 6종 | 〃 | `URBAN_HOMESTAY`, `RURAL_HOMESTAY`, `HANOK`, `HOSTEL`, `LODGING_FACILITY`, `GENERAL_LODGING` |
-| 객실 등록 | `POST /properties/{id}/rooms` | `[DB]` `room_name` |
-| 침대 등록 | `POST /rooms/{room_id}/beds` | `[DB]` `bed_label` |
+| 객실 등록 | `POST /properties/{id}/rooms` | **[v2.5 확정]** (요청) `room_name`(필수), `capacity`(선택, `null` 가능) / (응답) `room_id`, `room_name`, `capacity` |
+| 침대 등록 | `POST /rooms/{room_id}/beds` | **[v2.5 확정]** (요청) `bed_label`(필수) / (응답) `bed_id`, `bed_label` |
 | 채널 등록 | `POST /properties/{id}/channels` | (요청) `channel`, **`ical_url`(필수)**, `external_property_id` |
 | 등록된 채널 목록 | `GET /properties/{id}/channels` | `connection_id`, `channel`, `sync_status`, `last_synced_at`, `ical_url_masked` |
 
