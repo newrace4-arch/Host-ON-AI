@@ -34,8 +34,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import InvalidUnitHierarchyError, ReservationOverlapError
+from app.models.action_item import ActionItem
 from app.models.channel import ChannelConnection
-from app.models.enums import SyncStatus
+from app.models.enums import ActionRiskLevel, ActionStatus, SyncStatus
 from app.models.reservation import Reservation
 from app.schemas.reservation import ReservationCreateRequest
 from app.services.channel_service import get_owned_connection
@@ -48,6 +49,18 @@ ICAL_TIMEOUT_SECONDS = 5.0
 
 # 응답 크기 상한(바이트). 1년치 예약 캘린더도 수백 KB를 넘지 않는다.
 ICAL_MAX_BYTES = 2 * 1024 * 1024
+
+# [r49] 충돌 카드의 category. ACTION_ITEMS.category는 VARCHAR(50)이고
+#   ENUM이 아니라 **DB가 오타를 막지 못한다** — 상수로 한 곳에 둔다.
+#   api_contract 9.1절의 `category` 값 목록에도 함께 등록한다
+#   (그 절이 "신규 category를 추가할 때는 이 목록과 프론트 카드 컴포넌트
+#   분기를 함께 갱신한다"고 요구한다. 오타가 들어가면 아래 idempotency
+#   조회가 빗나가 같은 카드가 계속 쌓인다).
+CONFLICT_CATEGORY = "CONFLICT"
+
+# ACTION_ITEMS.title은 DB상 TEXT라 길이 제한이 없다. 화면 한 줄에 들어가야
+#   목록에서 훑을 수 있으므로 **애플리케이션에서 100자로 자른다.**
+TITLE_MAX_CHARS = 100
 
 
 class IcalSyncError(Exception):
@@ -287,6 +300,118 @@ async def _apply_event(
     return "created"
 
 
+async def _record_conflict(
+    db: "AsyncSession",
+    *,
+    property_id: int,
+    channel_label: str,
+    event: IcalEvent,
+    conflicting_ids: list[int],
+) -> bool:
+    """[r49] 겹침으로 반영하지 못한 이벤트를 `ACTION_ITEMS` 카드로 남긴다.
+
+    돌려주는 값은 **카드를 새로 만들었는가**다(중복이면 False).
+
+    ### 왜 카드인가
+
+    겹쳐서 저장하지 못한 이벤트는 **어디에도 남지 않는다.** `RESERVATIONS`에는
+    EXCLUDE 3종 때문에 못 넣고, 동기화 응답의 `skipped_overlap_count`는
+    응답이 화면을 떠나면 사라진다. `ACTION_ITEMS`가 *"소스 → ACTION_ITEMS →
+    Action Center"* 단일 지점이라는 state_events 2절 원칙을 그대로 따른다.
+
+    ### `reservation_id`에 무엇을 넣는가
+
+    **충돌 상대(이미 저장돼 있는 기존 예약)의 id**를 넣는다. 새 이벤트는
+    저장되지 못해 id 자체가 없다. 호스트가 카드를 눌렀을 때 **볼 수 있는
+    예약**이 있어야 하므로 기존 쪽을 가리킨다. 새 이벤트의 정보(채널·
+    게스트명·기간·`external_uid`)는 `content`에 담는다.
+
+    ⚠️ `ACTION_ITEMS`는 `(reservation_id, property_id)` **복합 FK**다.
+    `reservation_id`만 채우고 `property_id`를 빠뜨리면 INSERT가 실패한다
+    (`property_id`는 그 자체로 NOT NULL이기도 하다).
+
+    ⚠️ **`ChannelConnection` 인스턴스를 받지 않고 값으로 받는다.** 이 함수는
+    호출부에서 `rollback()` **직후**에 불리는데, 롤백은 세션의 인스턴스를
+    전부 만료시켜 그 뒤의 속성 접근이 **지연로딩(동기 IO)**을 일으킨다 →
+    async 컨텍스트에서 `MissingGreenlet`. 그래서 필요한 값을 롤백 전에
+    뽑아 넘긴다(conftest.py 27~33행이 경고하는 것과 같은 계열이다).
+
+    ### 중복 방지
+
+    `(reservation_id, category='CONFLICT', status='OPEN')`이 이미 있으면
+    만들지 않는다 — db_spec 2.15절이 정한 **애플리케이션 idempotency**다
+    (`ACTION_ITEMS`에는 UNIQUE 제약이 없다). `ical_sync`가 `external_uid`로
+    하는 "있으면 skip"과 같은 패턴이다.
+
+    🔴 **`status`를 `OPEN`으로 좁히는 것은 의도한 설계다.** 호스트가 카드를
+    `RESOLVED`로 닫았는데 **소스 데이터(OTA 양쪽 예약)가 그대로면 다음
+    동기화에서 카드가 다시 생긴다.** 충돌은 우리 DB에서 해소되는 것이
+    아니라 **호스트가 OTA 한쪽을 취소해야** 끝나기 때문이다. 닫았다고
+    사라지게 두면 **진짜 더블부킹이 화면에서 지워진다.**
+    (문서에 규정이 없어 r49에서 정한다.)
+    """
+    if not conflicting_ids:
+        # 충돌 상대를 특정하지 못한 경우다. 동시성으로 EXCLUDE에 걸린 경로가
+        #   여기에 해당한다 — _translate_integrity_error가 만드는
+        #   ReservationOverlapError에는 id 목록이 없다.
+        #   reservation_id를 비우면 복합 FK가 MATCH SIMPLE로 스킵되고
+        #   호스트가 눌러 볼 예약도 없으므로 **카드를 만들지 않는다.**
+        #   건수는 skipped_overlap_count로 남는다.
+        logger.info("충돌 상대를 특정하지 못해 카드를 만들지 않는다 uid=%s", event.uid)
+        return False
+
+    reservation_id = conflicting_ids[0]
+
+    existing = await db.scalar(
+        select(ActionItem).where(
+            ActionItem.reservation_id == reservation_id,
+            ActionItem.category == CONFLICT_CATEGORY,
+            ActionItem.status == ActionStatus.OPEN,
+        )
+    )
+    if existing is not None:
+        return False
+
+    guest = event.summary or "(게스트명 없음)"
+    title = (
+        f"[{channel_label}] {event.check_in}~{event.check_out} "
+        f"예약이 기존 예약과 겹칩니다"
+    )[:TITLE_MAX_CHARS]
+
+    # content에는 **두 예약을 구분할 수 있는 것**을 담는다. 채널·게스트명·
+    #   기간·external_uid가 있어야 호스트가 OTA에서 그 예약을 찾아 한쪽을
+    #   취소할 수 있다.
+    #   ⚠️ guest_name은 게스트 PII지만 이 값은 **호스트만 보는 DB 컬럼**이며
+    #     Claude로 나가지 않는다. 코딩규칙 12의 마스킹 대상은 외부 API로
+    #     나가는 텍스트다.
+    content = (
+        f"iCal 피드에서 받은 예약을 반영하지 못했습니다.\n"
+        f"- 새 예약(미반영): {channel_label} / {guest} / "
+        f"{event.check_in}~{event.check_out} / uid={event.uid}\n"
+        f"- 겹치는 기존 예약: 예약번호 {conflicting_ids}\n"
+        f"두 예약은 같은 판매단위에서 기간이 겹칩니다. "
+        f"OTA에서 한쪽을 취소해야 해소되며, 그 전까지는 동기화할 때마다 "
+        f"이 카드가 다시 만들어집니다."
+    )
+
+    db.add(
+        ActionItem(
+            property_id=property_id,  # 복합 FK의 구성 컬럼 — 빠뜨리면 실패
+            reservation_id=reservation_id,
+            # 더블부킹은 호스트에게 최악의 사고라 가장 높은 우선순위를 준다
+            #   (ui_design 1-4절 "가장 강한 경고색", api_contract 4.1절
+            #   "가장 먼저 알아야 할 정보"). risk_level은 규칙기반 운영
+            #   우선순위이지 AI·법적 판단이 아니다(CLAUDE.md).
+            risk_level=ActionRiskLevel.RED_NOW,
+            category=CONFLICT_CATEGORY,
+            title=title,
+            content=content,
+        )
+    )
+    await db.commit()
+    return True
+
+
 async def sync_connection(
     db: "AsyncSession", *, connection_id: int, host_id: int
 ) -> tuple["ChannelConnection", SyncOutcome]:
@@ -296,9 +421,21 @@ async def sync_connection(
     필요하고(취소인지 일시적 피드 오류인지 구분 불가), 잘못 지우면 복구가
     어렵다. 오늘 범위는 추가·갱신까지다.
 
-    겹침 처리는 **오늘 범위 밖이다**(r49, 9/12). iCal 동기화 중 충돌이
-    났을 때 건너뛸지 전체를 실패로 볼지가 어느 문서에도 정의돼 있지
-    않다. 지금은 그 건만 skipped로 세고 넘어간다.
+    **[r49] 겹침 처리 방침을 정했다(9/13).** 겹치는 이벤트는 **반영하지
+    않고**(EXCLUDE 때문에 넣을 수도 없다) `skipped_overlap`으로 세되,
+    **`ACTION_ITEMS`에 `CONFLICT` 카드를 남긴다.** 전체를 실패로 보지
+    않는다 — 나머지 이벤트는 정상 반영되어야 하고, 충돌은 호스트가
+    OTA에서 해소할 일이지 피드 오류가 아니기 때문이다.
+
+    🔴 **충돌 상대를 특정하는 것은 사전 조회다. EXCLUDE가 아니다.**
+    `create_reservation` → `validate_reservation_placement` →
+    `assert_no_overlap`이 INSERT **전에** 겹치는 예약을 조회해
+    `ReservationOverlapError.conflicting_reservation_ids`에 담아 온다.
+    그 사전 조회는 **EXCLUDE를 대체하지 않는다** — 동시 요청 둘이 각자
+    조회를 통과한 뒤 둘 다 INSERT할 수 있고, 그때 EXCLUDE 3종이 **최종
+    방어선**으로 막는다. 사전 조회의 목적은 막는 것이 아니라 **무엇과
+    부딪혔는지 알아내는 것**이다(EXCLUDE 위반 경로에서는 id 목록이 비어
+    카드를 만들지 못한다).
     """
     conn = await get_owned_connection(db, connection_id, host_id)
     outcome = SyncOutcome()
@@ -316,6 +453,12 @@ async def sync_connection(
     #   7건만 처리된 것으로 보인다).
     outcome.invalid_events = parsed.invalid_count
 
+    # [r49] 충돌 카드에 쓸 값을 **루프 전에** 뽑아 둔다. 루프 안의
+    #   rollback()이 conn을 만료시켜 그 뒤의 속성 접근이 지연로딩을
+    #   일으킨다(MissingGreenlet).
+    conn_property_id = conn.property_id
+    conn_channel_label = conn.channel.value
+
     for event in parsed.events:
         try:
             result = await _apply_event(db, conn, host_id, event)
@@ -328,11 +471,32 @@ async def sync_connection(
             logger.info("iCal 이벤트 건너뜀(객실 미지정) uid=%s: %s", event.uid, exc)
             await db.rollback()
         except ReservationOverlapError as exc:
-            # 겹침 처리 방침이 어느 문서에도 정의돼 있지 않다(r49, 9/12).
-            #   지금은 그 건만 세고 넘어간다.
+            # [r49] 반영하지 않는다는 것은 그대로다 — 겹치는 예약을 DB에
+            #   넣을 수는 없다. **달라진 것은 이유를 버리지 않는다는 점**이다.
             outcome.skipped_overlap += 1
             logger.info("iCal 이벤트 건너뜀(기간 겹침) uid=%s: %s", event.uid, exc)
+
+            # ⚠️ **롤백을 먼저 한다.** 실패한 INSERT가 세션에 남은 채로
+            #   ActionItem을 add하면 같은 트랜잭션이라 함께 롤백되거나
+            #   PendingRollbackError가 난다. 카드는 **롤백 뒤 별도 커밋**으로
+            #   남긴다 — 루프가 "이벤트마다 독립적으로 커밋한다"는 원칙을
+            #   이미 따르고 있다.
             await db.rollback()
+
+            # 충돌 상대는 **사전 조회로 특정된 것**이다(아래 주석 참고).
+            try:
+                await _record_conflict(
+                    db,
+                    property_id=conn_property_id,
+                    channel_label=conn_channel_label,
+                    event=event,
+                    conflicting_ids=exc.conflicting_reservation_ids,
+                )
+            except Exception:
+                # 카드 발행 실패가 동기화 전체를 멈추면 안 된다
+                #   (Graceful Degradation). 예약 반영 결과는 이미 확정됐다.
+                logger.warning("충돌 카드 생성 실패 uid=%s", event.uid, exc_info=True)
+                await db.rollback()
         except Exception as exc:
             # 예상 못 한 오류. 위 둘과 달리 **원인을 서버 로그에서 봐야 한다.**
             outcome.failed += 1

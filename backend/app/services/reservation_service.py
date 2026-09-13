@@ -269,6 +269,23 @@ async def validate_reservation_placement(
     )
 
 
+def _overlap_unit_label(exc: IntegrityError) -> str:
+    """[r49] EXCLUDE 3종 중 어느 것에 걸렸는지 사람이 읽을 말로 바꾼다.
+
+    db_spec 2.6.1의 제약 이름과 1:1로 대응한다:
+      `excl_property_overlap` / `excl_room_overlap` / `excl_bed_overlap`.
+    이름을 못 읽으면 빈 문자열을 돌려 기존 문구를 그대로 쓴다 — 판별
+    실패가 에러 번역 자체를 깨뜨리면 안 된다.
+    """
+    if violates_constraint(exc, "excl_property_overlap"):
+        return "숙소 전체"
+    if violates_constraint(exc, "excl_room_overlap"):
+        return "객실"
+    if violates_constraint(exc, "excl_bed_overlap"):
+        return "침대"
+    return ""
+
+
 def _translate_integrity_error(exc: IntegrityError) -> Exception:
     """DB 제약 위반을 도메인 예외로 옮긴다(마지막 방어선).
 
@@ -285,7 +302,18 @@ def _translate_integrity_error(exc: IntegrityError) -> Exception:
     sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
 
     if sqlstate == "23P01":  # exclusion_violation
-        return ReservationOverlapError("같은 기간에 이미 확정된 예약이 있습니다.")
+        # [r49] 어느 판매단위에서 걸렸는지를 제약 이름으로 구분한다.
+        #   **예외 타입으로는 판별할 수 없다** — asyncpg의
+        #   ExclusionViolationError는 SQLAlchemy가 자체 DBAPI 예외로
+        #   번역하면서 사라지고 sqlstate만 남는다(9/10 실측,
+        #   utils/db_errors.py 도크스트링). 그래서 제약 이름으로 본다.
+        #   sqlstate 23P01은 EXCLUDE 위반에만 쓰이므로 이 분기에 들어온
+        #   시점에 이미 겹침이 확정이고, 이름은 **어느 단위인지**만 더한다.
+        unit = _overlap_unit_label(exc)
+        #   판별에 실패하면(빈 문자열) 수식어 없이 **기존 문구 그대로** 나간다.
+        #   f-string에 그대로 끼우면 공백이 두 칸 남는다.
+        what = f"{unit} 예약" if unit else "예약"
+        return ReservationOverlapError(f"같은 기간에 이미 확정된 {what}이 있습니다.")
     if sqlstate == "23503":  # foreign_key_violation
         # 계층 복합FK 위반 = 다른 숙소 소속 객실/침대/채널을 참조한 경우.
         #   RESERVATIONS의 복합FK 3종:
