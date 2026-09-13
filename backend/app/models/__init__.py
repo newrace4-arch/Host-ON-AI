@@ -19,7 +19,11 @@ from app.models.inquiry import (
 from app.models.property import Bed, Property, Room
 from app.models.rag import KnowledgeChunk
 from app.models.reservation import Reservation
-from app.models.settlement import FinancialConfig, MonthlySettlement
+from app.models.settlement import (
+    ChannelFeeRate,
+    FinancialConfig,
+    MonthlySettlement,
+)
 
 __all__ = [
     "Base",
@@ -53,4 +57,6 @@ __all__ = [
     "ResponseSource",
     # 18. cleaning_task_photos [v1.4 신규]
     "CleaningTaskPhoto",
+    # 19. channel_fee_rates [v1.4 신규]
+    "ChannelFeeRate",
 ]

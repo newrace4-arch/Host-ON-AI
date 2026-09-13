@@ -15,12 +15,14 @@ id를 1씩 올려가며 403/404를 구분해 받으면 어떤 id가 실재하는
 from __future__ import annotations
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, ResourceNotFoundError
 from app.models.channel import ChannelConnection
 from app.models.property import Property
+from app.models.settlement import ChannelFeeRate
 from app.schemas.channel import ChannelConnectionCreateRequest
 from app.services.reservation_service import get_owned_property
 from app.utils.db_errors import violates_constraint
@@ -88,6 +90,23 @@ async def create_channel(
     확인하려면 외부 네트워크 호출이 필요한데 코딩규칙 11번이 그 호출에
     5초 타임아웃을 요구한다 — 등록 요청을 그만큼 붙잡아 두는 대신
     `SYNCING`으로 저장하고, 실패는 동기화가 `FAILED`로 남긴다.
+
+    **[v1.4] 요율 행을 함께 만든다** — `CHANNEL_FEE_RATES`에
+    `(property_id, channel)` 행이 없으면 기본값으로 만들고, **있으면
+    그대로 둔다**(db_spec 2.19절). 요청·응답은 바뀌지 않는 내부
+    불변식이라 api_contract 3.2절은 그대로다.
+
+    ⚠️ **그 INSERT는 예외를 내지 않는다 — 그래야 한다.**
+    `ON CONFLICT DO NOTHING`이라 중복이 있어도 조용히 0행을 넣는다.
+    예외를 냈다면 아래 `except IntegrityError` 분기로 흘러가는데, 그
+    분기의 `rollback()`은 **트랜잭션 전체를 되돌려 방금 만든 채널 연결까지
+    사라지게 한다.** 게다가 제약 이름이 `uq_property_channel`이 아니므로
+    409로 번역되지도 않고 `raise`로 500이 된다. 그래서 예외를 잡는 대신
+    **예외가 발생할 여지 자체를 없앴다.**
+
+    ⚠️ **`DO UPDATE`를 쓰지 않는다.** 호스트가 고쳐 둔 요율을 덮어쓴다.
+    연결을 지웠다 다시 만드는 것은 흔한 일이고(iCal URL 변경에 `PATCH`가
+    없다), 그때마다 요율이 기본값으로 되돌아가면 안 된다.
     """
     await get_owned_property(db, property_id, host_id)
 
@@ -108,6 +127,21 @@ async def create_channel(
                 "URL을 바꾸려면 연결을 해제한 뒤 다시 등록하십시오."
             ) from exc
         raise
+
+    # v1.4: 요율 행이 없으면 기본값으로 만든다. 있으면 그대로 둔다.
+    #   ORM add()가 아니라 INSERT ... ON CONFLICT DO NOTHING을 쓰는 이유는
+    #   위 도크스트링 참고(예외 경로로 가면 연결까지 롤백된다).
+    #   충돌 대상을 제약 이름이 아니라 **컬럼 목록**으로 추론하게 둔다 —
+    #   ⑤ 마이그레이션의 백필이 쓰는 형태와 같아 두 경로가 한 문장으로
+    #   읽힌다. 기본값 3종(SINGLE_FEE / 0.1550 / system_default_2026)은
+    #   DB의 server_default가 채운다.
+    #   flush() **뒤**에 둔다 — 커밋은 라우터가 하므로 연결과 요율이 한
+    #   트랜잭션에 묶이는 것은 그대로다.
+    await db.execute(
+        pg_insert(ChannelFeeRate)
+        .values(property_id=property_id, channel=payload.channel)
+        .on_conflict_do_nothing(index_elements=["property_id", "channel"])
+    )
 
     return conn
 
