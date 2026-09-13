@@ -1,4 +1,4 @@
-"""DB명세서 v1.3 1절의 ENUM 타입 정의 (16개 테이블 공용).
+"""DB명세서 v1.4 1절의 ENUM 타입 정의 (19개 테이블 공용).
 
 - 파이썬 Enum의 **value**가 곧 PostgreSQL ENUM 라벨이다.
 - SQLAlchemy Enum 인스턴스를 모듈 레벨에서 1개만 만들어 여러 모델이

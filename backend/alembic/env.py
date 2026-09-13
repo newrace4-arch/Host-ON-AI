@@ -17,7 +17,7 @@ from sqlalchemy import engine_from_config, pool
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import settings  # noqa: E402
-from app.models import Base  # noqa: E402  (16개 모델 전부 임포트하는 패키지)
+from app.models import Base  # noqa: E402  (19개 모델 전부 임포트하는 패키지)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.sync_database_url)

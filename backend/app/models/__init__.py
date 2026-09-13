@@ -1,6 +1,11 @@
-"""SQLAlchemy 모델 패키지 — DB명세서 v1.3의 16개 테이블.
+"""SQLAlchemy 모델 패키지 — DB명세서 v1.4의 19개 테이블.
 
 Alembic autogenerate가 모든 테이블을 인식하려면 여기서 전부 임포트해야 한다.
+
+v1.4 신설 3개(17~19)는 **새 파일이 아니라 기존 파일 안**에 들어가 있다 —
+`ResponseSource`는 `inquiry.py`, `CleaningTaskPhoto`는 `cleaning.py`,
+`ChannelFeeRate`는 `settlement.py`. 셋 다 기존 도메인에 붙는 테이블이라
+그 도메인 파일에 두는 편이 읽기 쉽다.
 """
 
 from app.core.database import Base

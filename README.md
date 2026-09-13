@@ -60,11 +60,15 @@
 ---
 
 ## 🧱 데이터 모델 구조 (ERD 개요)
-총 16개 테이블로 구성되어 있으며, 숙소 공간 계층과 운영 데이터를 완벽히 격리합니다:
+총 19개 테이블로 구성되어 있으며, 숙소 공간 계층과 운영 데이터를 완벽히 격리합니다:
 - **계층 구조:** `HOSTS` → `PROPERTIES` → `ROOMS` → `BEDS`
-- **운영/채널:** `CHANNEL_CONNECTIONS` ↔ `RESERVATIONS` ↔ `CLEANING_TASKS`
-- **AI/RAG:** `KNOWLEDGE_CHUNKS` (숙소별 RAG), `INQUIRIES` → `INQUIRY_RESPONSES` (1:N + `is_latest`)[cite: 5]
-- **업무/정산:** `ACTION_ITEMS`, `FINANCIAL_CONFIGS`, `MONTHLY_SETTLEMENTS`, `CHECKLIST_ITEMS`
+- **운영/채널:** `CHANNEL_CONNECTIONS` ↔ `RESERVATIONS` ↔ `CLEANING_TASKS` → `CLEANING_TASK_PHOTOS`
+- **AI/RAG:** `KNOWLEDGE_CHUNKS` (숙소별 RAG), `INQUIRIES` → `INQUIRY_RESPONSES` (1:N + `is_latest`) → `RESPONSE_SOURCES` (응답↔인용청크 N:N)[cite: 5]
+- **업무/정산:** `ACTION_ITEMS`, `FINANCIAL_CONFIGS`, `CHANNEL_FEE_RATES` (채널별 수수료율), `MONTHLY_SETTLEMENTS`, `CHECKLIST_ITEMS`
+
+> v1.4(9/13)에서 3개가 늘었습니다. JSONB 배열이나 숙소 단위 컬럼으로 담고
+> 있던 것을 **행으로 분리**한 것이라(FK가 걸리지 않는 참조를 없애기 위함),
+> 새 도메인이 생긴 것은 아닙니다.
 
 ---
 

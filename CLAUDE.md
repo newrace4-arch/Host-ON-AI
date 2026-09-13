@@ -489,10 +489,13 @@ C:\3rd host AI\
 │   │   │   ├── database.py             # async_sessionmaker, AsyncEngine
 │   │   │   ├── security.py             # JWT 발급/검증, 패스워드 해싱
 │   │   │   └── dependencies.py         # verify_property_access 등 소유권 주입
-│   │   ├── models\                     # SQLAlchemy 2.0 모델 (16개 테이블)
+│   │   ├── models\                     # SQLAlchemy 2.0 모델 (19개 테이블)
 │   │   │   ├── host.py / property.py / channel.py / reservation.py
 │   │   │   ├── cleaning.py / settlement.py / inquiry.py / rag.py
 │   │   │   └── action_item.py / compliance.py
+│   │   │   # ⚠️ v1.4 신설 3개는 **새 파일이 아니라 기존 파일 안**에 있다:
+│   │   │   #   ResponseSource→inquiry.py / CleaningTaskPhoto→cleaning.py
+│   │   │   #   ChannelFeeRate→settlement.py (기존 도메인에 붙는 테이블)
 │   │   ├── schemas\                    # Pydantic v2 Request/Response DTO
 │   │   ├── api\v1\
 │   │   │   ├── api_router.py           # 모든 도메인 라우터 취합
@@ -770,9 +773,19 @@ C:\3rd host AI\
 - 과거 크로스체크 과정에서 나왔던 초안 ERD(guests/payments/payouts/
   notifications/smart_locks 등을 포함한 화려한 버전)는 **폐기된 초안**이다.
   참고하지 않는다.
-- DB 구조를 하나라도 변경하면 항상 이 순서로 갱신한다:
-  `DB 명세서 수정 → ERD 수정 → API Contract 영향 확인 → 체크리스트 수정 → git commit`.
+- **[9/13 개정] DB 구조를 하나라도 변경하면 항상 이 순서로 갱신한다:**
+  `DB 명세서 수정 → 마이그레이션 → ERD(물리는 자동 생성, 논리는 수기)
+   → API Contract 영향 확인 → 체크리스트 수정 → git commit`.
   체크리스트를 먼저 고치지 않는다.
+  - **왜 마이그레이션이 ERD 앞으로 왔는가**: 강사님 4차 미팅 권고로
+    **물리 ERD를 자동 생성으로 바꾸기로 했다.** 자동 생성은 실제 스키마를
+    읽어 만드는 것이라 **마이그레이션이 적용된 뒤에만 가능하다.** 옛 순서
+    (명세서 → ERD → ...)로는 지킬 수 없는 절차가 된다.
+  - **논리 ERD는 여전히 수기다.** 한글 엔티티·속성명으로 쓰는 개념 모델이라
+    DB에서 뽑을 수 없다(erd.md 1절).
+  - **오늘(9/13) 실제로 이 순서로 했다**: db_spec v1.4 확정(9/12,
+    `f549b31`) → revision ①~⑤ 적용(9/13, 제약 40→50) → 문서 갱신.
+    ERD를 마이그레이션보다 먼저 고쳤다면 자동 생성분을 두 번 만들게 된다.
 - **[9/4 검증에서 얻은 규칙] API Contract에 엔드포인트를 새로 적을 때는,
   그 요청/응답 데이터를 실제로 저장할 컬럼이 명세서에 있는지 먼저
   확인한다.** 9/4 검증에서 `sync-errors`(실패사유)와 `photo`(청소사진)
@@ -793,7 +806,7 @@ C:\3rd host AI\
     |---|---|
     | troubleshooting 22번 | `CHECKLIST_ITEMS`에 값을 채우는 경로가 어느 문서에도 없는 채 NOT NULL 컬럼만 존재 |
     | 9/10 iCal | **피드가 객실을 주지 않는다는 사실**이 db_spec 2.5절·api_contract 3절·코딩규칙 11 **어디에도 적혀 있지 않아** 설계 검토로 잡히지 않았다 |
-    | (예상) 정산 | 채널별 수수료 — `FINANCIAL_CONFIGS.property_id`가 UNIQUE라 숙소당 1개인데 채널은 3개까지 허용된다 |
+    | (예상) 정산 | 채널별 수수료 — `FINANCIAL_CONFIGS.property_id`가 UNIQUE라 숙소당 1개인데 채널은 3개까지 허용된다 → **9/13 v1.4에서 `CHANNEL_FEE_RATES` 신설로 해소(예상이 맞았다)** |
   - > **이 세 건은 문서끼리 완전히 일관되고 코드도 돌기 때문에 기계
     > 대조로 원리상 잡히지 않는다.** 대조할 원본이 문서에 없기 때문이다.
 
@@ -816,7 +829,8 @@ C:\3rd host AI\
 - `docs/erd.md` — ERD 3종(논리/물리/RESERVATIONS확대본), DB명세서 변경시 함께 갱신
 - `docs/erd_memo.md` — 초보자용 ERD 관계설정 해설(PK/FK 이유 메모, 이미지 포함)
 - `docs/state_events.md` — 상태전이(3개 엔티티) + 이벤트 연결 구조(예약→청소→정산→알림)
-- `docs/api_contract.md` — API 엔드포인트 목록·요청/응답 스펙(v2.3)
+- `docs/api_contract.md` — API 엔드포인트 목록·요청/응답 스펙(v2.5)
+- `docs/flowchart.md` — 구조 플로우차트(AI 응대 로직 변경 시 함께 갱신)
 - `docs/claude_code_stage1_schema.md` — 1단계 스키마 구현 실행 지시서(9/5 실행용)
 - `docs/ui_design.md` — UI/UX 설계 원칙·라우트 11개·공통 컴포넌트(SSOT)
 - `docs/ui_wireframe.md` — 핵심 화면 5종 와이어프레임(9/7, ui_design.md 기준)
@@ -825,3 +839,15 @@ C:\3rd host AI\
 - `BACKUP_RULES.md` — 이 파일의 백업 규칙 원본(상세 설명 포함)
 - `.gitignore` — 이미 구성됨, 환경변수/캐시/빌드산출물 제외 처리됨
 - `docs/video_recording_setup.md` — 발표영상 녹화(OBS)·편집(Clipchamp) 환경 설정 및 10/7~10/10 실행계획
+- `docs/video_guide.md` — 발표영상 제작 가이드(대본·촬영 순서, 10/7~10/10 활용)
+- `docs/devlog/YYYY-MM-DD.md` — 일일 개발 로그(8-3). 템플릿은 `docs/devlog/TEMPLATE.md`
+
+> **위 목록은 "작업 중 참고할 문서"다.** 아래 셋은 특정 시점의 기록이라
+> 목록에 넣지 않는다 — 지금의 설계를 확인하려고 열면 옛 상태(16개 테이블,
+> v1.3)를 사실로 오인하게 된다. 필요할 때 `docs/`에서 직접 찾는다.
+>
+> | 파일 | 성격 |
+> |---|---|
+> | `docs/project_plan_draft.md` | 1차 기획서 **초안**. 현행 설계의 근거가 아니다 |
+> | `docs/claude_code_db_schema_instruction.md` | 9/5 1단계 스키마 구현 **실행 지시서**(당시 16개 테이블 기준) |
+> | `docs/db_review_20260911.md` | 9/11 4차 미팅 **검토 요청 기록**(v1.3 시점). v1.4는 이 검토의 결과다 |
