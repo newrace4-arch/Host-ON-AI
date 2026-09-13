@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ResourceNotFoundError
+from app.core.exceptions import InvalidUnitHierarchyError, ResourceNotFoundError
 from app.models.channel import ChannelConnection
 from app.models.enums import BookableUnitType, Channel, SyncStatus
 from app.models.host import Host
@@ -347,3 +347,164 @@ async def test_existing_null_room_id_rows_survived_migration(
     assert stored is not None
     assert stored.room_id is None
     assert stored.channel is Channel.AIRBNB
+
+
+# ------------------------------------------------- [v1.4] POST 요청의 room_id
+#
+# ③에서 컬럼을 만들고 API는 미뤘다. api_contract 3.2절이 9/13에 요청 필드를
+# 확정하면서 선행 조건이 풀렸다(CLAUDE.md 9/10 규칙 — 엔드포인트를 구현하기
+# 전에 응답 스펙이 있는지 확인한다).
+#
+# **세 가지를 전부 400 INVALID_UNIT_HIERARCHY로 거부한다** — 다른 숙소의 객실 /
+# 없는 객실 / 독채에 room_id 지정. DB 복합 FK에 맡기지 않고 서비스 레이어가
+# 미리 막는 이유는 `_validate_room_for_channel` 도크스트링과
+# `create_channel`의 주석 참고.
+
+
+async def test_room_id_is_optional(db: AsyncSession, host: Host, make_property):
+    """생략하면 `null` — 숙소 전체 피드다.
+
+    기존 테스트가 전부 이 경로를 쓰므로, 선택 필드로 두지 않으면 회귀가
+    통째로 깨진다.
+    """
+    prop, _ = await make_property(BookableUnitType.PROPERTY)
+    await db.commit()
+
+    conn = await channel_service.create_channel(
+        db,
+        property_id=prop.property_id,
+        host_id=host.host_id,
+        payload=ChannelConnectionCreateRequest(
+            channel=Channel.BOOKING_COM, ical_url=REAL_URL
+        ),
+    )
+    await db.commit()
+
+    assert conn.room_id is None
+    assert ChannelConnectionResponse.from_model(conn).room_id is None
+
+
+async def test_room_id_accepted_for_room_unit_property(
+    db: AsyncSession, host: Host, make_property
+):
+    """호스텔의 객실별 피드 — 유효한 `room_id`는 저장되고 응답에도 실린다."""
+    prop, _ = await make_property(BookableUnitType.ROOM)
+    room = await db.scalar(select(Room).where(Room.property_id == prop.property_id))
+    await db.commit()
+
+    conn = await channel_service.create_channel(
+        db,
+        property_id=prop.property_id,
+        host_id=host.host_id,
+        payload=ChannelConnectionCreateRequest(
+            channel=Channel.BOOKING_COM, ical_url=REAL_URL, room_id=room.room_id
+        ),
+    )
+    await db.commit()
+
+    assert conn.room_id == room.room_id
+    assert ChannelConnectionResponse.from_model(conn).room_id == room.room_id
+
+
+async def test_room_id_of_other_property_is_400(
+    db: AsyncSession, host: Host, make_property
+):
+    """다른 숙소의 객실 → 400. **404가 아니다.**
+
+    `property_id`는 경로에 있고 이미 소유권이 검증된 상태라, 문제는
+    "남의 리소스"가 아니라 **요청 본문이 그 숙소의 계층과 맞지 않는 것**이다
+    (api_contract 3.2절). 0절의 404 통일 규칙은 경로의 리소스에 적용된다.
+    """
+    prop_a, _ = await make_property(BookableUnitType.ROOM)
+    prop_b, _ = await make_property(BookableUnitType.ROOM)
+    room_of_b = await db.scalar(
+        select(Room).where(Room.property_id == prop_b.property_id)
+    )
+    await db.commit()
+
+    with pytest.raises(InvalidUnitHierarchyError) as exc:
+        await channel_service.create_channel(
+            db,
+            property_id=prop_a.property_id,
+            host_id=host.host_id,
+            payload=ChannelConnectionCreateRequest(
+                channel=Channel.BOOKING_COM,
+                ical_url=REAL_URL,
+                room_id=room_of_b.room_id,
+            ),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.code == "INVALID_UNIT_HIERARCHY"
+
+
+async def test_nonexistent_room_id_is_400(
+    db: AsyncSession, host: Host, make_property
+):
+    """없는 객실 → 같은 400이다. **남의 객실과 구분하지 않는다.**"""
+    prop, _ = await make_property(BookableUnitType.ROOM)
+    await db.commit()
+
+    with pytest.raises(InvalidUnitHierarchyError) as exc:
+        await channel_service.create_channel(
+            db,
+            property_id=prop.property_id,
+            host_id=host.host_id,
+            payload=ChannelConnectionCreateRequest(
+                channel=Channel.BOOKING_COM, ical_url=REAL_URL, room_id=9_999_999
+            ),
+        )
+
+    assert exc.value.code == "INVALID_UNIT_HIERARCHY"
+
+
+async def test_room_id_on_property_unit_is_400(
+    db: AsyncSession, host: Host, make_property
+):
+    """독채에 `room_id` 지정 → 400. **DB는 이것을 막지 못한다.**
+
+    `bookable_unit_type`은 `PROPERTIES`에 있어 `channel_connections`의 제약으로
+    볼 수 없다. 서비스 레이어가 없으면 그대로 저장되고, 화면이 그 `room_id`로
+    객실명을 찾다가 실패한다(그 숙소의 `GET .../rooms`는 빈 배열이 정상이다).
+    """
+    prop, _ = await make_property(BookableUnitType.PROPERTY)
+    await db.commit()
+
+    with pytest.raises(InvalidUnitHierarchyError) as exc:
+        await channel_service.create_channel(
+            db,
+            property_id=prop.property_id,
+            host_id=host.host_id,
+            payload=ChannelConnectionCreateRequest(
+                channel=Channel.BOOKING_COM, ical_url=REAL_URL, room_id=1
+            ),
+        )
+
+    assert exc.value.code == "INVALID_UNIT_HIERARCHY"
+
+
+async def test_room_unit_property_may_omit_room_id(
+    db: AsyncSession, host: Host, make_property
+):
+    """🔴 `ROOM` 숙소에서 `room_id` 생략이 **거부되지 않는다.**
+
+    이것이 `reservation_service.validate_unit_hierarchy` 오용을 막는 유일한
+    장치다. 그 함수를 재사용하면 `ROOM` 숙소에 `room_id`가 없을 때
+    `ROOM_ID_REQUIRED`를 던지므로, **호스텔이 숙소 전체 피드 하나만 등록하려는
+    정상 요청이 거부된다.** 예약은 어느 객실을 파는지가 반드시 정해져야 하지만
+    iCal 피드는 숙소 단위로 하나만 걸 수도 있다.
+    """
+    prop, _ = await make_property(BookableUnitType.ROOM)
+    await db.commit()
+
+    conn = await channel_service.create_channel(
+        db,
+        property_id=prop.property_id,
+        host_id=host.host_id,
+        payload=ChannelConnectionCreateRequest(
+            channel=Channel.NAVER, ical_url=REAL_URL
+        ),
+    )
+    await db.commit()
+
+    assert conn.room_id is None

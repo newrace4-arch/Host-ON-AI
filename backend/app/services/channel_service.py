@@ -19,9 +19,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AppError, ResourceNotFoundError
+from app.core.exceptions import (
+    AppError,
+    InvalidUnitHierarchyError,
+    ResourceNotFoundError,
+)
 from app.models.channel import ChannelConnection
-from app.models.property import Property
+from app.models.enums import BookableUnitType
+from app.models.property import Property, Room
 from app.models.settlement import ChannelFeeRate
 from app.schemas.channel import ChannelConnectionCreateRequest
 from app.services.reservation_service import get_owned_property
@@ -86,6 +91,61 @@ async def get_owned_connection(
     return conn
 
 
+async def _validate_room_for_channel(
+    db: AsyncSession, prop: Property, room_id: int | None
+) -> None:
+    """[v1.4] 채널 연결의 `room_id`가 이 숙소의 계층과 맞는지 검증한다.
+
+    api_contract 3.2절이 정한 세 가지를 **전부 400
+    `INVALID_UNIT_HIERARCHY`로 거부**한다 — 다른 숙소의 객실 / 존재하지
+    않는 객실 / 독채(`PROPERTY`)에 `room_id` 지정.
+
+    🔴 **`reservation_service.validate_unit_hierarchy`를 재사용하면 안 된다.**
+    이름이 비슷하고 에러 코드도 같아 **합치고 싶어지는 자리**지만 뜻이
+    다르다.
+
+      - `ROOM`/`BED` 숙소에서 `room_id`를 **그 함수는 필수로 본다**
+        (없으면 `ROOM_ID_REQUIRED`/`BED_ID_REQUIRED`). **이 함수는
+        선택으로 본다** — 없으면 숙소 전체 피드다.
+      - `bed_id`는 이 함수가 다루지 않는다(채널 연결에 그 컬럼이 없다).
+
+    재사용하면 **호스텔이 숙소 전체 피드 하나만 등록하려는 정상 요청이
+    `ROOM_ID_REQUIRED`로 거부된다.** 예약은 어느 객실을 파는지가 반드시
+    정해져야 하지만, iCal 피드는 숙소 단위로 하나만 걸 수도 있다.
+
+    **남의 객실과 없는 객실을 구분하지 않는다** — api_contract가 둘을 같은
+    코드로 묶었고(0절 정보노출 원칙과 같은 취지), 조회 한 번으로 소유와
+    소속을 함께 본다.
+    """
+    if room_id is None:
+        # 모든 판매단위에서 정상이다. 독채는 항상 이 경로이고,
+        #   ROOM/BED 숙소도 '숙소 전체 피드'를 등록할 수 있다.
+        return
+
+    if prop.bookable_unit_type is BookableUnitType.PROPERTY:
+        raise InvalidUnitHierarchyError(
+            "이 숙소는 전체(PROPERTY) 단위로 판매합니다. "
+            "객실별 피드를 등록할 수 없습니다.",
+            code="INVALID_UNIT_HIERARCHY",
+        )
+
+    # 소유(host_id)는 위 get_owned_property가 이미 확인했으므로, 여기서는
+    #   '그 객실이 이 숙소 소속인가'만 본다. DB의 복합 FK
+    #   fk_channel_connections_room_property와 같은 조건이며, 그것은
+    #   동시성 대비 마지막 방어선으로 남는다.
+    room = await db.scalar(
+        select(Room).where(
+            Room.room_id == room_id,
+            Room.property_id == prop.property_id,
+        )
+    )
+    if room is None:
+        raise InvalidUnitHierarchyError(
+            "지정한 객실이 이 숙소 소속이 아닙니다.",
+            code="INVALID_UNIT_HIERARCHY",
+        )
+
+
 async def create_channel(
     db: AsyncSession,
     *,
@@ -116,12 +176,30 @@ async def create_channel(
     ⚠️ **`DO UPDATE`를 쓰지 않는다.** 호스트가 고쳐 둔 요율을 덮어쓴다.
     연결을 지웠다 다시 만드는 것은 흔한 일이고(iCal URL 변경에 `PATCH`가
     없다), 그때마다 요율이 기본값으로 되돌아가면 안 된다.
+
+    **[v1.4] `room_id`를 받는다**(api_contract 3.2절). 선택 필드이며
+    생략하면 숙소 전체 피드다. 검증은 `_validate_room_for_channel`이
+    하며, **DB 오류 번역이 아니라 미리 막는다** — 아래 주석 참고.
     """
-    await get_owned_property(db, property_id, host_id)
+    prop = await get_owned_property(db, property_id, host_id)
+
+    # [v1.4] room_id 검증을 **flush() 앞**에 둔다.
+    #   DB 복합 FK(fk_channel_connections_room_property)에 맡기면
+    #   IntegrityError가 아래 except로 흘러가는데, 그 분기는
+    #   **rollback()으로 트랜잭션 전체를 되돌린다.** 게다가 제약 이름이
+    #   uq_property_channel이 아니라 409로 번역되지도 않고,
+    #   reservation_service._translate_integrity_error는
+    #   'fk_reservations_' 접두사로만 판정해 이 제약을 404로 떨어뜨린다
+    #   (api_contract 3.2절은 400을 요구한다).
+    #   세 경우 중 '독채에 room_id 지정'은 DB가 아예 막지 못하므로
+    #   (bookable_unit_type이 다른 테이블에 있다) 어차피 서비스 레이어가
+    #   필요하다 — 셋을 한 곳에서 처리해 경로를 하나로 묶는다.
+    await _validate_room_for_channel(db, prop, payload.room_id)
 
     conn = ChannelConnection(
         property_id=property_id,
         channel=payload.channel,
+        room_id=payload.room_id,
         ical_url=payload.ical_url,
         external_property_id=payload.external_property_id,
     )
@@ -131,8 +209,11 @@ async def create_channel(
     except IntegrityError as exc:
         await db.rollback()
         if violates_constraint(exc, "uq_property_channel"):
+            # [v1.4] 제약이 3컬럼이 되면서 **객실별 중복도 여기로 온다.**
+            #   메시지가 '숙소에 이미 연결된 채널'이면 호스텔 호스트는
+            #   다른 객실 피드를 등록하려다 이 문구를 보고 원인을 오해한다.
             raise ChannelAlreadyConnectedError(
-                "이 숙소에 이미 연결된 채널입니다. "
+                "이미 연결된 채널입니다(같은 숙소·채널·객실 조합). "
                 "URL을 바꾸려면 연결을 해제한 뒤 다시 등록하십시오."
             ) from exc
         raise

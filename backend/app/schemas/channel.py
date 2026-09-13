@@ -43,6 +43,15 @@ class ChannelConnectionCreateRequest(BaseModel):
     #   없어 SYNCING으로 영원히 남는다.
     ical_url: str = Field(min_length=1)
     external_property_id: str | None = Field(default=None, max_length=100)
+    # [v1.4] 객실별 iCal 피드용. **선택 필드**이며 생략하면 숙소 전체
+    #   피드가 된다(3.2절). OTA는 객실마다 별도 리스팅을 만들고 객실마다
+    #   별도 iCal URL을 주는데, **피드 자체는 객실을 알려주지 않으므로**
+    #   호스트가 지정해야 한다(db_spec 2.5절).
+    # ⚠️ 예약(`ReservationCreateRequest.room_id`)과 뜻이 다르다 — 거기서는
+    #   ROOM/BED 숙소에 **필수**지만, 여기서는 ROOM/BED 숙소에서도
+    #   **선택**이다. 호스텔이 객실별 피드 대신 숙소 전체 피드 하나만
+    #   등록하는 것이 정상 경로이기 때문이다.
+    room_id: int | None = None
 
     @field_validator("ical_url")
     @classmethod
@@ -60,6 +69,10 @@ class ChannelConnectionResponse(BaseModel):
 
     connection_id: int
     channel: Channel
+    # [v1.4] null이면 숙소 전체 피드(독채는 항상 null). 값이 있으면 그
+    #   객실의 리스팅 피드다. 화면은 이 값으로 GET /properties/{id}/rooms의
+    #   room_name을 찾아 카드에 표시한다(api_contract 3.1절).
+    room_id: int | None
     ical_url_masked: str | None
     external_property_id: str | None
     sync_status: SyncStatus
@@ -77,6 +90,7 @@ class ChannelConnectionResponse(BaseModel):
         return cls(
             connection_id=conn.connection_id,
             channel=conn.channel,
+            room_id=conn.room_id,
             ical_url_masked=mask_ical_url(conn.ical_url),
             external_property_id=conn.external_property_id,
             sync_status=conn.sync_status,
