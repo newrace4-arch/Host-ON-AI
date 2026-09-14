@@ -26,6 +26,13 @@ export type ActionItem = components["schemas"]["ActionItem"];
 export type Meta = components["schemas"]["Meta"];
 export type ApiError = components["schemas"]["ApiError"];
 
+/* ── [9/14] 캘린더가 쓰는 셋. api.ts를 재생성하면 이름이 바뀔 수 있다
+   (백엔드 DTO명이 그대로 스키마명이 된다 — `RoomResponse` 등).
+   그때 **이 파일 세 줄만** 고치면 컴포넌트는 손대지 않는다. */
+export type Room = components["schemas"]["Room"];
+export type Bed = components["schemas"]["Bed"];
+export type Reservation = components["schemas"]["Reservation"];
+
 /* ── 화면 전용 타입 (API 응답이 아님) ───────────────────────────── */
 
 /**

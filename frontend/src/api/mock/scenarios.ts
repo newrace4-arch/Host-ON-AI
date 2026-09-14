@@ -51,6 +51,27 @@ export function shouldFailSummary(propertyId: number): boolean {
   return false;
 }
 
+/**
+ * 캘린더의 예약 조회를 실패시킨다 → 그리드 자리에 ERROR (9/14 추가)
+ *
+ *   ?mock_reservations_error=2  → 2번 숙소의 예약 조회가 계속 실패
+ *
+ * ⚠️ **Mock 모드가 아니어도 동작한다. 대신 개발 빌드에서만 산다.**
+ * 위 세 플래그와 다른 점이다. 캘린더는 실서버(`VITE_USE_MOCK=false`)로
+ * 붙어 동작을 확인하는데 **에러 상태만은 실서버로 재현할 수 없다** —
+ * 서버를 고장 낼 수 없고, 네트워크를 끊으면 `rooms`까지 함께 죽어
+ * 그리드 에러와 구분되지 않는다. 완료 조건이 *"브라우저에서 세 상태를
+ * 눈으로 봤다"*이므로 재현 수단이 없으면 완료할 수 없다.
+ *
+ * 🔴 **`import.meta.env.DEV`로 막는다.** 프로덕션 번들에서는 상수 `false`가
+ * 되어 본문이 통째로 제거된다 — **배포본에 화면을 고장 내는 쿼리
+ * 파라미터를 남기지 않는다.**
+ */
+export function shouldFailReservations(propertyId: number): boolean {
+  if (!import.meta.env.DEV) return false;
+  return flags().get("mock_reservations_error") === String(propertyId);
+}
+
 /** 네트워크 지연 흉내 — LOADING 상태를 눈으로 확인하기 위함 */
 export function mockDelay(ms = 400): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

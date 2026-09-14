@@ -17,6 +17,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import WakeUpGate from "@/components/WakeUpGate";
 import AppLayout from "@/components/layout/AppLayout";
+import Calendar from "@/pages/Calendar";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Placeholder from "@/pages/Placeholder";
@@ -50,8 +51,9 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            {/* TODO(9/11~): Placeholder → 실제 컴포넌트로 교체 */}
-            <Route path="/calendar" element={<Placeholder name="캘린더" scoped />} />
+            {/* TODO(9/11~): Placeholder → 실제 컴포넌트로 교체.
+                /calendar는 9/14 r48에서 교체됐다. */}
+            <Route path="/calendar" element={<Calendar />} />
             <Route path="/inquiries" element={<Placeholder name="AI 인박스" scoped />} />
             <Route path="/actions" element={<Placeholder name="액션센터" scoped />} />
             <Route path="/cleaning" element={<Placeholder name="청소 관리" scoped />} />

@@ -34,6 +34,65 @@ export interface components {
     };
 
     /**
+     * GET /properties/{property_id}/rooms — api_contract v2.6 2.1절
+     *
+     * `capacity`의 `null`은 **미입력**이며 `0`이 아니다. 화면에서 둘을
+     * 구분해 표시한다(2.1절).
+     * `property_id`·`created_at`은 응답에 없다 — 경로에 이미 있고,
+     * 등록 시각을 쓰는 화면이 없다.
+     */
+    Room: {
+      room_id: number;
+      room_name: string;
+      capacity: number | null;
+    };
+
+    /** GET /rooms/{room_id}/beds — v2.6 2.2절. `room_id`·`created_at` 없음 */
+    Bed: {
+      bed_id: number;
+      bed_label: string;
+    };
+
+    /**
+     * 예약 1건 — v2.6 4.3·4.4절. **15필드**이며 목록과 상세가 같다.
+     *
+     * `is_conflict`는 **DB 컬럼이 아니라 서버가 매 조회 시 계산하는 파생
+     * 필드**다(4.4절). 범위는 **판매단위를 넘나드는 겹침만**이며
+     * `PENDING`끼리의 겹침은 포함하지 않는다.
+     *
+     * `room_name`·`bed_label`이 **없다.** 이름은 `Room`·`Bed` 목록에서
+     * 찾아 쓴다 — 출처를 하나로 두기 위한 결정이다(4.4절).
+     *
+     * `net_amount`는 DB 생성 컬럼(`gross - fee`)이라 `gross`/`fee` 중
+     * 하나가 `null`이면 `null`이다. `base_price`가 `0`(미설정)인 숙소의
+     * 예약이 그 상태다 — **0원이 아니라 "요금 미설정"으로 표시한다.**
+     */
+    Reservation: {
+      reservation_id: number;
+      property_id: number;
+      room_id: number | null;
+      bed_id: number | null;
+      channel_connection_id: number;
+      guest_name: string | null;
+      /** YYYY-MM-DD */
+      check_in: string;
+      /** YYYY-MM-DD */
+      check_out: string;
+      reservation_status:
+        | "PENDING"
+        | "CONFIRMED"
+        | "MODIFIED"
+        | "CANCELLED"
+        | "COMPLETED";
+      refund_status: "NONE" | "PARTIAL" | "FULL";
+      financial_status: "ESTIMATED" | "CONFIRMED" | "MANUALLY_ADJUSTED";
+      gross_amount: number | null;
+      fee_amount: number | null;
+      net_amount: number | null;
+      is_conflict: boolean;
+    };
+
+    /**
      * GET /properties/{property_id}/dashboard/summary — v2.0 4.1절
      *
      * 12개 키 전부 항상 존재한다(옵셔널 아님).
