@@ -1,6 +1,27 @@
-# Host ON (AI) — API Contract v2.5 (9/13 숙소 API 스펙 확정)
+# Host ON (AI) — API Contract v2.6 (9/14 예약 API 스펙 확정)
 
 > `docs/3rd_host_ai_db_spec_v1.md`(**v1.4**) 19개 테이블을 기준으로 작성.
+> **v2.5→v2.6 변경 (9/14 예약 API 스펙 확정 — r48 캘린더 구현 선행 작업)**:
+> 1. **예약 API 4종 요청·응답 스펙 신규 확정**(4.3~4.6절). 4절 표에 행만
+>    있고 스펙이 없던 넷이다 — `GET .../reservations`(완전 신설),
+>    `GET /reservations/{id}`·`POST /reservations`·`PATCH .../status`
+>    (기존 산문을 절로 편성하고 빠진 것을 채움). **필드는 전부
+>    `RESERVATIONS` 실재 컬럼 + 파생 1개이며 DB 스키마 변경은 없다.**
+> 2. 🔴 **`is_conflict`의 범위를 확정**(4.4절) — **판매단위를 넘나드는**
+>    겹침만이다. `PENDING`끼리의 겹침은 포함하지 않는다(확정 전 예약이
+>    겹치는 것은 비정상이 아니며, 확정 시점에 EXCLUDE나 409가 막는다).
+> 3. **기간 필터는 `?start=`·`?end=`**(4.3절). `from`은 파이썬 예약어라
+>    서버에서 회피 이름을 쓰게 되고 파라미터명과 변수명이 갈린다.
+> 4. **예약 응답에 `room_name`·`bed_label`을 담지 않는다**(4.4절).
+>    이름의 출처를 `rooms`·`beds` 목록 하나로 둔다. **다시 볼 조건**
+>    (객실 10개 초과 시 `GET /properties/{id}/beds` 신설)도 함께 적었다.
+> 5. **신규 에러 코드 1종** — `400 INVALID_STATUS_TRANSITION`(4.6절).
+>    허용되지 않는 전이와 무의미한 조합을 같은 코드로 묶는다.
+>    **`409 RESERVATION_OVERLAP`은 v1.7에 이미 확정된 것을 그대로 쓴다** —
+>    새 이름을 만들지 않았다.
+> 6. **2.1절 「용도」에 캘린더 그리드 행 구성 추가.** 기존 문장은 모달만
+>    상정해, 그대로 읽으면 **모달을 열 때 부르는** 구현이 된다.
+>
 > **v2.4→v2.5 변경 (9/13 숙소 API 스펙 확정 — 9/14 구현 선행 작업)**:
 > 1. **숙소 API 4종 응답·요청 스펙 신규 확정**(2.3~2.6절). 2절 표에 행만
 >    있고 스펙이 없던 넷이다 — `POST /properties` 응답, `GET`·`PATCH`
@@ -580,7 +601,18 @@ FastAPI 예제에서 흔히 쓰이지만 **우리 계약과 두 군데가 어긋
 > 없는 것**이다. 등록을 유도하는 EmptyState를 띄우면 안 된다
 > (`docs/ui_design.md` 5절 `EmptyState`는 "데이터 0건 안내"용이다).
 
-**용도**: 캘린더의 **예약 생성 모달이 `room_id` 선택지를 채울 때** 쓴다
+**용도**: 두 가지다.
+
+1. **[v2.6] 캘린더 그리드의 행 구성** — `ROOM`/`BED` 단위 숙소는 하위
+   단위를 별도 행으로 그리므로(`docs/ui_design.md` 1-4절), **화면 진입
+   시점에** 객실 목록이 필요하다. 모달을 열 때가 아니다.
+2. 캘린더의 **예약 생성 모달이 `room_id` 선택지를 채울 때**
+
+> 🔴 **진입 시 한 번만 받아 화면이 소유한다.** 모달을 열 때마다 부르면
+> 같은 목록을 반복 호출하게 된다 — 9/11에 `GET /properties`가 화면당
+> 2회 나가던 것을 `Outlet context`로 해소한 것과 같은 자리다
+> (`frontend/src/hooks/usePropertyList.ts`).
+
 (`docs/ui_design.md` 4-5절). 모달은 `bookable_unit_type`이 `ROOM`이면
 `room_id`를, `BED`면 `room_id`+`bed_id`를 필수로 요구하며, 값이 없거나
 계층이 어긋나면 4절의 400 3종(`INVALID_UNIT_HIERARCHY` /
@@ -1486,6 +1518,87 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
 
 ---
 
+### 4.3 GET /properties/{property_id}/reservations 응답 스펙 (v2.6 신규 확정)
+
+> 9/14 확인 결과 이 엔드포인트는 4절 표 한 행뿐이고 **요청·응답 스펙이
+> 어디에도 없었다**(2.1·2.2·2.3절이 겪은 것과 같은 상태 —
+> troubleshooting 23번). r48 통합 캘린더 구현의 선행 작업으로 확정한다.
+> **필드는 전부 `RESERVATIONS` 실재 컬럼 + 파생 1개이며 DB 스키마 변경은
+> 없다.**
+
+**용도**: `/calendar` 그리드가 **그 기간의 예약 블록 전부**를 그릴 때
+쓴다(`docs/ui_design.md` 4-5절).
+
+**요청 — 쿼리 파라미터**
+
+| 이름 | 타입 | 필수 | 비고 |
+|---|---|---|---|
+| `start` | `date` | ✅ | 조회 시작일(**포함**). `YYYY-MM-DD` |
+| `end` | `date` | ✅ | 조회 종료일(**포함**) |
+
+> **`from`을 쓰지 않는 이유**: 파이썬 예약어라 서버 구현에서
+> `from_`·`from_date` 같은 회피 이름을 쓰게 되고, 그러면 **쿼리
+> 파라미터 이름과 코드 변수명이 갈린다.** `start`/`end`는 양쪽에서
+> 같은 철자를 쓴다.
+
+**기간 판정은 "겹치는 것 전부"다** — `check_in <= :end AND check_out > :start`.
+그 달 안에서 시작하거나 끝나는 예약뿐 아니라 **달을 가로지르는 예약도
+포함**해야 그리드에 막대가 끊기지 않는다.
+
+**`meta` 없음** — 0절 메타 규약의 예외다. 캘린더는 **그 기간 전부를
+받아야** 하므로 페이지네이션이 구조적으로 적용될 수 없다. 일부만 받으면
+그리드에서 예약이 통째로 사라진다(`GET /properties`가 예외인 것과 같은
+이유 — 0절).
+
+```json
+{
+  "data": [
+    {
+      "reservation_id": 501,
+      "property_id": 1,
+      "room_id": null,
+      "bed_id": null,
+      "channel_connection_id": 7,
+      "guest_name": "Reserved",
+      "check_in": "2026-09-10",
+      "check_out": "2026-09-12",
+      "reservation_status": "CONFIRMED",
+      "refund_status": "NONE",
+      "financial_status": "ESTIMATED",
+      "gross_amount": 300000,
+      "fee_amount": 46500,
+      "net_amount": 253500,
+      "is_conflict": false
+    }
+  ],
+  "error": null
+}
+```
+
+**원소는 4.4절 단건 응답과 완전히 같은 15필드다.** 목록과 상세를 다르게
+두지 않는다 — 2절의 `PropertySummary`/`PropertyDetail` 분리는 목록이
+드롭다운 **입력**이라 성립했지만, 캘린더 목록은 **예약 블록을 그리는 것이
+목적**이라 상세와 같은 정보가 필요하다(색상 판정에 상태 3종과
+`is_conflict`가 전부 쓰인다 — `docs/ui_design.md` 1-4절).
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 존재하지 않는 `property_id`. **둘을 구분하지 않는다**(0절 — 403 금지) |
+
+> 공통 에러(401 `UNAUTHORIZED`, 형식 오류 `VALIDATION_ERROR`)는 절마다
+> 반복하지 않는다 — 0절이 전역으로 정한다. **이 표에는 프론트가 분기해야
+> 하는 것만 적는다.**
+
+### 4.4 GET /reservations/{reservation_id} 응답 스펙 (v2.6 절 편성)
+
+> 아래 응답 예시와 주석은 **v1.6·v1.7에 4절 본문에 산문으로 있던 것**이다.
+> 내용을 바꾸지 않고 이 절로 옮기고 **필드 표를 새로 붙였다**(v2.6).
+
+**소유권 검증**: 이 경로에는 `property_id`가 없다. 0절 규칙에 따라 조회
+쿼리 자체에 소유권 조건을 묶는다(0절의 SQL 예시가 바로 이 엔드포인트다).
+
 **GET /reservations/{id} 응답 예시**
 ```json
 {
@@ -1509,42 +1622,193 @@ turnover가 없는 단위는 12:00부터 체크인을 받을 수 있으나, turn
   "error": null
 }
 ```
-> **필드명 주의(v1.6 정정)**: 예약의 정산 후 실수령액은 `net_amount`다.
-> `net_payout`은 `MONTHLY_SETTLEMENTS`(월 단위 집계)의 컬럼명이므로
-> 예약 응답에 쓰지 않는다. `is_conflict`는 DB 컬럼이 아니라 **서버가
-> 매 조회 시 계산해 내려주는 파생 필드**(같은 property 내 다른 판매단위와
-> 기간이 겹치는지 여부)이므로 스키마에 없는 것이 정상이다.
-> ⚠️ 이 API는 `bookable_unit_type=PROPERTY`인데 `room_id`가 채워진 요청이
-> 들어오면 400 에러로 거부해야 함(명세서 4절 0번 — DB CHECK가 못 잡는
-> 부분을 여기서 애플리케이션이 검증). 구체적 에러 스펙:
->
-> | bookable_unit_type | 위반 조건 | HTTP | code |
-> |---|---|---|---|
-> | PROPERTY | room_id 또는 bed_id가 NOT NULL | 400 | `INVALID_UNIT_HIERARCHY` |
-> | ROOM | room_id가 NULL 이거나 bed_id가 NOT NULL | 400 | `ROOM_ID_REQUIRED` |
-> | BED | room_id 또는 bed_id가 NULL | 400 | `BED_ID_REQUIRED` |
 
-> **[v1.7 추가] 교차 판매단위 기간 충돌은 `409 Conflict`, code
-> `RESERVATION_OVERLAP`**. DB의 EXCLUDE 제약 3종은 **같은 판매단위끼리만**
-> 겹침을 막으므로(PROPERTY↔PROPERTY, ROOM↔ROOM, BED↔BED), 독채 예약과 그
-> 하위 객실/침대 예약 사이의 충돌은 `POST /reservations` 서비스 레이어가
-> 직접 조회해 차단한다(명세서 2.6.1절 경고, troubleshooting.md 1번).
-> 응답 message에는 충돌한 예약번호를 함께 담는다.
->
-> | 상황 | HTTP | code |
-> |---|---|---|
-> | 같은 숙소에서 기간이 겹치는 다른 단위 예약 존재 | 409 | `RESERVATION_OVERLAP` |
-> | 동시성으로 DB EXCLUDE에 걸린 경우(마지막 방어선) | 409 | `RESERVATION_OVERLAP` |
->
-> 겹침 판정은 반개구간이다 — **체크아웃일과 다음 예약의 체크인일이 같은 날인
-> 연박 이어짐은 충돌이 아니다**(EXCLUDE의 `tsrange` 판정과 동일).
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `reservation_id` | `RESERVATIONS.reservation_id` | |
+| `property_id` | `.property_id` | |
+| `room_id` | `.room_id` | **nullable.** 독채 예약은 `null` |
+| `bed_id` | `.bed_id` | **nullable.** `room_id` 없이 값만 있을 수 없다(DB CHECK) |
+| `channel_connection_id` | `.channel_connection_id` | `NOT NULL` |
+| `guest_name` | `.guest_name` | nullable. iCal은 `SUMMARY`를 넣는다 |
+| `check_in` | `.check_in` | **`DATE`**. `YYYY-MM-DD` |
+| `check_out` | `.check_out` | **`DATE`** |
+| `reservation_status` | `.reservation_status` | `PENDING`/`CONFIRMED`/`MODIFIED`/`CANCELLED`/`COMPLETED` |
+| `refund_status` | `.refund_status` | `NONE`/`PARTIAL`/`FULL`. **독립 전이** |
+| `financial_status` | `.financial_status` | `ESTIMATED`/`CONFIRMED`/`MANUALLY_ADJUSTED`. **독립 전이** |
+| `gross_amount` | `.gross_amount` | nullable. `base_price × 박수`이며 `base_price`가 `0`(미설정)이면 `null` |
+| `fee_amount` | `.fee_amount` | nullable. **계산 시점의 요율 스냅샷** |
+| `net_amount` | `.net_amount` | **생성 컬럼**(`gross - fee`). 둘 중 하나가 `null`이면 `null` |
+| `is_conflict` | **파생** | DB 컬럼이 아니다. 아래 정의 |
 
-> `PATCH /reservations/{id}/status`는 3개 필드(reservation_status/
-> refund_status/financial_status) 전부 Optional로 받는 단일 엔드포인트로
-> 유지한다(엔드포인트 3개로 쪼개면 환불+취소 동시처리 시 트랜잭션이
-> 2번 발생해 오히려 비효율). 단, 서비스 레이어에서 무의미한 조합(예:
-> `reservation_status=CANCELLED`인데 `refund_status=NONE`인 경우)은
-> validator로 차단한다.
+> **`room_name`·`bed_label`은 담지 않는다** — `room_id`·`bed_id`만 준다.
+> 이름의 출처는 `GET /properties/{id}/rooms`·`GET /rooms/{id}/beds` 하나로
+> 둔다(3.1절 `room_id`가 같은 방식이다). 예약 응답에 이름을 박아두면
+> 객실명을 바꿨을 때 **캘린더와 예약 목록이 서로 다른 이름을 보여준다.**
+> 화면은 진입 시 받아 둔 목록에서 찾아 표시한다(2.1절 「용도」).
+>
+> **다시 볼 조건**: 한 숙소의 객실이 **10개를 넘으면** `BED` 단위에서
+> `GET /rooms/{id}/beds`를 객실 수만큼 부르는 비용이 체감된다. 그때는
+> 예약 응답에 이름을 넣는 것이 아니라 **`GET /properties/{id}/beds`(숙소
+> 단위 침대 목록)를 신설**한다 — 이름의 출처가 여전히 하나로 남는다.
+
+> 🔴 **`is_conflict`의 정의 (v2.6 확정)**: **같은 숙소 안에서 판매단위를
+> 넘나드는 기간 겹침**이 있는가다(독채 ↔ 객실 ↔ 침대). `RESERVATIONS`에
+> 컬럼이 없고 서버가 매 조회 시 계산한다.
+>
+> **왜 그런 행이 DB에 존재할 수 있는가**: EXCLUDE 3종이 각각
+> `property_id`/`room_id`/`bed_id`를 `WITH =`로 보므로 **서로 다른 인덱스에
+> 들어가 마주치지 않는다.** 독채 예약과 그 하위 객실 예약은 같은 기간이어도
+> 둘 다 저장된다(9/14 실측 확인).
+>
+> **`PENDING` 상태끼리의 겹침은 `is_conflict`에 포함하지 않는다.** EXCLUDE의
+> `WHERE`절이 `CONFIRMED`·`MODIFIED`만 대상으로 해서 `PENDING` 겹침도 DB에
+> 들어갈 수 있으나, **확정 전 예약이 겹치는 것은 비정상이 아니다** — 둘 중
+> 하나가 확정될 때 EXCLUDE나 4.5절의 409가 막는다.
+
+**필드명 주의(v1.6 정정)**: 예약의 정산 후 실수령액은 `net_amount`다.
+`net_payout`은 `MONTHLY_SETTLEMENTS`(월 단위 집계)의 컬럼명이므로
+예약 응답에 쓰지 않는다. `is_conflict`는 DB 컬럼이 아니라 **서버가
+매 조회 시 계산해 내려주는 파생 필드**(같은 property 내 다른 판매단위와
+기간이 겹치는지 여부)이므로 스키마에 없는 것이 정상이다.
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `reservation_id`(0절) |
+
+### 4.5 POST /reservations 요청·응답 스펙 (v2.6 신규 확정)
+
+> 4절 표에 행이 있고 **에러 스펙만**(v1.6·v1.7) 있었다. 요청 본문과 응답
+> 형태를 여기서 확정한다. 아래 400 3종·409 표는 **기존 산문을 그대로 옮긴
+> 것**이며 내용을 바꾸지 않았다.
+
+**상태 코드는 `201`이다** — 새 리소스를 만든다(1.3절·2.3절과 같은 규약).
+
+**요청 본문**
+
+| 필드 | 필수 | 출처 컬럼 | 비고 |
+|---|---|---|---|
+| `property_id` | ✅ | `.property_id` | |
+| `room_id` | — | `.room_id` | 판매단위가 `ROOM`/`BED`면 필수(아래 표) |
+| `bed_id` | — | `.bed_id` | **`room_id` 없이 단독으로 보낼 수 없다** |
+| `channel_connection_id` | ✅ | `.channel_connection_id` | `NOT NULL`. 수동 등록도 어느 채널인지 지정한다 |
+| `external_uid` | — | `.external_uid` | 최대 150자. iCal `UID`. 수동 등록은 생략 |
+| `guest_name` | — | `.guest_name` | 최대 100자 |
+| `guest_language` | — | `.guest_language` | 최대 10자 |
+| `check_in` | ✅ | `.check_in` | `DATE`. `YYYY-MM-DD` |
+| `check_out` | ✅ | `.check_out` | `DATE`. **`check_in`보다 뒤여야 한다** |
+| `booked_at` | — | `.booked_at` | ISO8601 |
+| `reservation_status` | — | `.reservation_status` | 생략 시 `CONFIRMED`(DB 기본값) |
+| `gross_amount` | — | `.gross_amount` | |
+| `fee_amount` | — | `.fee_amount` | |
+
+> 🔴 **`net_amount`는 요청에서 받지 않는다.** `[v1.4]`에서 생성 컬럼
+> (`GENERATED ALWAYS AS (gross_amount - fee_amount) STORED`)이 되어
+> **INSERT에 실리는 순간 PostgreSQL이 거부**한다. 값을 보내면 그 요청만
+> 500이 된다. **응답에는 그대로 있다** — 읽기는 정상이다.
+>
+> `expected_settlement_at`·`actual_settlement_at`·
+> `host_confirmation_required`·`created_at`도 요청에서 받지 않는다 —
+> 서버·배치가 채우는 값이다.
+
+**응답 201** — 4.4절과 같은 15필드.
+
+**판매단위와 맞지 않는 조합은 거부한다**
+
+⚠️ 이 API는 `bookable_unit_type=PROPERTY`인데 `room_id`가 채워진 요청이
+들어오면 400 에러로 거부해야 함(명세서 4절 0번 — DB CHECK가 못 잡는
+부분을 여기서 애플리케이션이 검증). 구체적 에러 스펙:
+
+| bookable_unit_type | 위반 조건 | HTTP | code |
+|---|---|---|---|
+| PROPERTY | room_id 또는 bed_id가 NOT NULL | 400 | `INVALID_UNIT_HIERARCHY` |
+| ROOM | room_id가 NULL 이거나 bed_id가 NOT NULL | 400 | `ROOM_ID_REQUIRED` |
+| BED | room_id 또는 bed_id가 NULL | 400 | `BED_ID_REQUIRED` |
+
+**[v1.7 추가] 교차 판매단위 기간 충돌은 `409 Conflict`, code
+`RESERVATION_OVERLAP`**. DB의 EXCLUDE 제약 3종은 **같은 판매단위끼리만**
+겹침을 막으므로(PROPERTY↔PROPERTY, ROOM↔ROOM, BED↔BED), 독채 예약과 그
+하위 객실/침대 예약 사이의 충돌은 `POST /reservations` 서비스 레이어가
+직접 조회해 차단한다(명세서 2.6.1절 경고, troubleshooting.md 1번).
+응답 message에는 충돌한 예약번호를 함께 담는다.
+
+| 상황 | HTTP | code |
+|---|---|---|
+| 같은 숙소에서 기간이 겹치는 다른 단위 예약 존재 | 409 | `RESERVATION_OVERLAP` |
+| 동시성으로 DB EXCLUDE에 걸린 경우(마지막 방어선) | 409 | `RESERVATION_OVERLAP` |
+
+겹침 판정은 반개구간이다 — **체크아웃일과 다음 예약의 체크인일이 같은 날인
+연박 이어짐은 충돌이 아니다**(EXCLUDE의 `tsrange` 판정과 동일).
+
+**에러 정리**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | `INVALID_UNIT_HIERARCHY` · `ROOM_ID_REQUIRED` · `BED_ID_REQUIRED` | 위 표 |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `property_id`·`room_id`·`bed_id`·`channel_connection_id`(0절) |
+| 409 | `RESERVATION_OVERLAP` | 위 표 |
+
+### 4.6 PATCH /reservations/{reservation_id}/status 요청·응답 스펙 (v2.6 신규 확정)
+
+> 4절 본문에 **설계 근거 한 문단**(v1.6)만 있었다. 요청 형태와 허용 전이를
+> 여기서 확정한다. 아래 인용문은 기존 산문을 그대로 옮긴 것이다.
+
+`PATCH /reservations/{id}/status`는 3개 필드(reservation_status/
+refund_status/financial_status) 전부 Optional로 받는 단일 엔드포인트로
+유지한다(엔드포인트 3개로 쪼개면 환불+취소 동시처리 시 트랜잭션이
+2번 발생해 오히려 비효율). 단, 서비스 레이어에서 무의미한 조합(예:
+`reservation_status=CANCELLED`인데 `refund_status=NONE`인 경우)은
+validator로 차단한다.
+
+**요청 본문 — 3필드 전부 Optional**
+
+| 필드 | 출처 컬럼 | 허용값 |
+|---|---|---|
+| `reservation_status` | `.reservation_status` | `PENDING`/`CONFIRMED`/`MODIFIED`/`CANCELLED`/`COMPLETED` |
+| `refund_status` | `.refund_status` | `NONE`/`PARTIAL`/`FULL` |
+| `financial_status` | `.financial_status` | `ESTIMATED`/`CONFIRMED`/`MANUALLY_ADJUSTED` |
+
+```json
+// Request — 취소 + 전액 환불을 한 번에
+{ "reservation_status": "CANCELLED", "refund_status": "FULL" }
+```
+
+**빈 본문(`{}`)은 에러가 아니다.** 바꿀 것이 없다는 뜻이므로 현재 상태를
+그대로 `200`으로 돌려준다(2.5절과 같은 규약).
+
+**응답 200** — 4.4절과 같은 15필드(갱신 후 전체 상태).
+
+**허용 전이** — `docs/state_events.md` 1절이 원본이다.
+
+| 현재 | 허용되는 다음 |
+|---|---|
+| `PENDING` | `CONFIRMED` |
+| `CONFIRMED` | `MODIFIED` · `CANCELLED` · `COMPLETED` |
+| `MODIFIED` | `CONFIRMED` |
+| `CANCELLED` | **없음**(종결) |
+| `COMPLETED` | **없음**(종결) |
+
+> `COMPLETED`는 **`checkout_time` 기준 배치가 전이시킨다**(state_events 1절).
+> API로도 보낼 수 있게 두되, 배치가 정상 경로다.
+>
+> `refund_status`(`NONE`→`PARTIAL`→`FULL`)와 `financial_status`
+> (`ESTIMATED`→`CONFIRMED`/`MANUALLY_ADJUSTED`)는 `reservation_status`와
+> **별도로 독립 전이**한다(상태 분리 원칙, 명세서 v1.2 2.6절).
+
+**에러**
+
+| HTTP | code | 조건 |
+|---|---|---|
+| 400 | **`INVALID_STATUS_TRANSITION`** | 위 표에 없는 전이 / **무의미한 조합**(예: `CANCELLED`인데 `refund_status=NONE`). message에 현재 상태와 요청한 상태를 담는다 |
+| 404 | `RESOURCE_NOT_FOUND` | 타인 소유이거나 없는 `reservation_id`(0절) |
+
+> **두 상황을 한 코드로 묶는 이유**: 둘 다 *"값 자체는 유효한데 지금
+> 상태에서는 불가"*다. `VALIDATION_ERROR`(형식이 틀렸다)와 처리가 다르고 —
+> 프론트는 **현재 상태를 다시 읽어 선택지를 줄여야** 한다 — 둘 사이에는
+> 프론트가 다르게 처리할 이유가 없다. 2.5절 `IMMUTABLE_FIELD`를 따로 둔
+> 것과 같은 기준이다(*"형식은 맞는데 바꿀 수 없다"*).
 
 ---
 
