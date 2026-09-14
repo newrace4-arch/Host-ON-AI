@@ -37,12 +37,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_host_id
 from app.schemas.common import Envelope
+from app.schemas.dashboard import DashboardSummaryResponse
 from app.schemas.reservation import (
     ReservationCreateRequest,
     ReservationResponse,
     ReservationStatusUpdateRequest,
 )
-from app.services import reservation_service
+from app.services import dashboard_service, reservation_service
 
 router = APIRouter(tags=["reservations"])
 
@@ -150,5 +151,43 @@ async def update_reservation_status(
     conflict = await reservation_service.is_conflicting(db, reservation)
     return {
         "data": ReservationResponse.from_model(reservation, is_conflict=conflict),
+        "error": None,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 대시보드 요약 (4.1~4.2절)
+#
+# 🔴 **이 파일에 두는 것은 CLAUDE.md 디렉토리 규격이 정한 자리다** —
+#   `reservations.py  # 예약 + GET /dashboard/summary`. 집계 로직 자체는
+#   RESERVATIONS 말고도 ACTION_ITEMS·CLEANING_TASKS를 읽으므로
+#   `services/dashboard_service.py`에 따로 뒀다(라우터는 얇게).
+# ──────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/properties/{property_id}/dashboard/summary",
+    response_model=Envelope[DashboardSummaryResponse],
+    summary="대시보드 요약(숙소 1개, 실시간 집계)",
+)
+async def get_dashboard_summary(
+    property_id: int,
+    db: DbSession,
+    host_id: CurrentHostId,
+) -> dict:
+    """4.1절 12필드를 **매 요청 실시간으로** 집계한다. 캐싱하지 않는다.
+
+    **교차 숙소 합산은 하지 않는다**(4.2절) — 프론트가 `GET /properties`로
+    목록을 받은 뒤 숙소마다 이 엔드포인트를 병렬 호출해 합산하며, 하나가
+    실패해도 나머지는 정상 렌더링한다. 그래서 여기는 숙소 하나만 본다.
+
+    `conflict_count`만 계산 실패 시 `null`이고 나머지 11개는 정상값이다.
+    타인 소유·부존재는 구분 없이 **404**다(코딩규칙 1번).
+    """
+    summary = await dashboard_service.get_summary(
+        db, property_id=property_id, host_id=host_id
+    )
+    return {
+        "data": DashboardSummaryResponse.model_validate(summary),
         "error": None,
     }
