@@ -38,6 +38,11 @@ export function shouldReturnEmptyProperties(): boolean {
 const failedOnce = new Set<number>();
 
 export function shouldFailSummary(propertyId: number): boolean {
+  // 🔴 [r58, 9/14] `shouldFailReservations`와 같은 가드. 대시보드도 실서버로
+  //   붙어 동작하므로 **Mock 모드가 아니어도 실패를 만들 수 있어야** 한다.
+  //   프로덕션 번들에서는 상수 `false`가 되어 본문이 제거된다.
+  if (!import.meta.env.DEV) return false;
+
   const f = flags();
 
   if (f.get("mock_error") === String(propertyId)) return true;
