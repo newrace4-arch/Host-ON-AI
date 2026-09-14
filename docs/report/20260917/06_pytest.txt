@@ -1,0 +1,50 @@
+Host ON (AI) — 회귀 테스트 결과
+측정: 2026-09-14 (9/17 중간보고서용)
+
+$ cd backend && python -m pytest -q
+
+    315 passed, 69 warnings in 94.69s (0:01:34)
+
+──────────────────────────────────────────────────────────────
+ 파일별 (23개 파일)
+──────────────────────────────────────────────────────────────
+   35  tests/test_auth_schemas.py
+   26  tests/test_properties_write.py
+   22  tests/test_conflict_rule_parity.py
+   21  tests/test_reservations_api.py
+   19  tests/test_channels.py
+   18  tests/test_reservation_integrity.py
+   17  tests/test_rooms_beds_write.py
+   16  tests/test_security.py
+   16  tests/test_properties_read.py
+   15  tests/test_dashboard_summary.py
+   15  tests/test_auth_endpoints.py
+   14  tests/test_ical_sync.py
+   13  tests/test_auth_idor.py
+   12  tests/test_channel_fee_rates.py
+   10  tests/test_response_sources.py
+   10  tests/test_generated_net_amount.py
+    9  tests/test_exclude_constraint_behavior.py
+    9  tests/test_config.py
+    5  tests/test_ical_conflict_action.py
+    5  tests/test_cleaning_task_photos.py
+    4  tests/test_ical_sync_outcome.py
+    2  tests/test_integrity_error_translation.py
+    2  tests/test_health.py
+
+──────────────────────────────────────────────────────────────
+ 오늘(9/14) 신설 — 67건
+──────────────────────────────────────────────────────────────
+   22  test_conflict_rule_parity.py       겹침 판정 SQL/메모리 경로 대조
+   21  test_reservations_api.py           예약 API 4종 (response_model 첫 적용)
+   15  test_dashboard_summary.py          대시보드 실시간 집계 12필드
+    9  test_exclude_constraint_behavior.py EXCLUDE 제약 3종 실동작
+
+  아침 248건 + 67 = 315건
+
+──────────────────────────────────────────────────────────────
+ 환경
+──────────────────────────────────────────────────────────────
+  Python 3.12 / pytest 8.3.3 / pytest-asyncio
+  PostgreSQL 17 (Docker, pgvector 이미지) — 실제 DB에 붙어 실행
+  테스트는 자기 호스트를 만들고 끝날 때 삭제한다(HOSTS CASCADE)
