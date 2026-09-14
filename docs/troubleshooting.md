@@ -1161,6 +1161,52 @@ E  AssertionError: CHECK 위반이 번역되지 않아 500이 된다: IntegrityE
 
 ---
 
+### 33. 생성 컬럼이 UPDATE 뒤 만료돼 MissingGreenlet (9/14)
+
+**문제**: 예약 상태를 `PATCH`로 바꾸면 응답을 만드는 자리에서
+`MissingGreenlet`이 났다. 같은 필드를 읽는 `POST`는 정상이었고, **값을
+실제로 바꾼 요청에서만** 재현됐다(빈 본문 `{}`은 통과).
+
+```
+File "app/schemas/reservation.py", line 104, in from_model
+    net_amount=r.net_amount,
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+can't call await_only() here. Was IO attempted in an unexpected place?
+```
+
+**원인**: `RESERVATIONS.net_amount`는 `[v1.4]`에서 **생성 컬럼**이 됐다
+(`GENERATED ALWAYS AS (gross_amount - fee_amount) STORED`). SQLAlchemy는
+**UPDATE 뒤 서버가 다시 계산하는 컬럼의 값을 신뢰하지 않고 만료시킨다.**
+그 뒤 속성을 읽으면 지연로딩이 걸리는데, async 컨텍스트에서는 동기 IO라
+`MissingGreenlet`이 된다.
+
+🔴 **`expire_on_commit=False`로 막히지 않는다.** 그 옵션은 **커밋** 시점의
+만료를 끄는 것이고, 여기서 만료되는 시점은 **flush**다. 세션 설정을
+확인하고 "만료는 없다"고 판단하면 원인을 놓친다.
+
+**`POST`가 통과한 이유**: INSERT는 `RETURNING`으로 생성 컬럼 값을 함께
+받아온다. UPDATE 경로에는 그 처리가 없다.
+
+**해결**: 값을 실제로 바꾼 경우에만 `flush()` 뒤 `await db.refresh()`를
+넣었다(`reservation_service.update_reservation_status`). 바꾼 것이 없으면
+UPDATE 자체가 나가지 않으므로 refresh도 하지 않는다 — 빈 본문 `PATCH`가
+쿼리를 하나도 더 쓰지 않는다.
+
+> **같은 계열이 오늘 네 번째다.** 앞의 셋은 `rollback()`이 인스턴스를
+> 만료시킨 것이었고(9/13 r49 2회, `PATCH` 테스트 1회) 이것은 **원인이
+> 다른 네 번째**다. 공통점은 *"만료된 ORM 속성을 async에서 읽으면
+> 터진다"*이고, 차이는 **무엇이 만료시키는가**다.
+>
+> | 만료시키는 것 | 막는 방법 |
+> |---|---|
+> | `rollback()` | 필요한 값을 **롤백 전에** 뽑아 둔다 |
+> | 생성 컬럼 UPDATE 뒤 `flush()` | `await db.refresh()` |
+>
+> **앞으로 생성 컬럼을 추가하면 UPDATE 경로를 함께 본다.** 지금은
+> `net_amount` 하나뿐이지만 늘어나면 같은 자리가 반복된다.
+
+---
+
 ## 요약
 
 | 카테고리 | 항목 | 성격 |
