@@ -57,6 +57,7 @@ pytestmark = pytest.mark.asyncio
 TODAY = date(2026, 9, 14)
 YESTERDAY = date(2026, 9, 13)
 TOMORROW = date(2026, 9, 15)
+TWO_DAYS_AGO = date(2026, 9, 12)
 
 # 4.1절 JSON 예시의 키 순서 그대로. 🔴 **11이 아니라 12다**(스키마 도크스트링).
 EXPECTED_FIELDS = [
@@ -269,6 +270,82 @@ async def test_turnover_is_not_counted_across_different_units(db, host, make_pro
     assert s.today_checkout_count == 1
     assert s.today_checkin_count == 1
     assert s.today_turnover_count == 0, "다른 침대인데 turnover로 셌다"
+
+
+# 🔴 **"건수가 아니라 단위 수"는 활성 예약으로 시험할 수 없다** (14-37 실측)
+#
+# 4.1절이 turnover를 *"둘 다 존재하는 **단위의 수**"*로 정의했으므로 같은
+# 단위에서 오늘 2건이 나가고 2건이 들어오면 turnover가 1이어야 한다 —
+# 이것을 고정하는 테스트를 쓰려다 **EXCLUDE에 막혔다**:
+#
+#     asyncpg.exceptions.ExclusionViolationError:
+#       conflicting key value violates exclusion constraint "excl_property_overlap"
+#
+# 같은 단위에서 같은 날 2건이 체크아웃하려면 **둘 다 그 전에 시작해 서로
+# 겹쳐야** 하는데, 활성 상태(CONFIRMED/MODIFIED)끼리의 겹침은 `excl_*`가
+# 막는다. 즉 **DB가 이미 "단위당 하루 체크아웃 1건"을 보장**하고 있어
+# 활성 예약만 보는 이 집계에서는 단위 수와 건수가 언제나 같다.
+#
+# 4.1절의 "단위의 수"라는 표현은 틀린 것이 아니라 **더 방어적인 정의**이며,
+# 비활성 상태를 집계에 넣는 날 비로소 둘이 갈린다. 그때 이 테스트를 쓴다.
+
+async def test_modified_status_is_counted(db, host, make_property):
+    """🔴 `MODIFIED`도 활성이다 — `ACTIVE_STATUSES`는 **둘**이다.
+
+    `CONFIRMED`만 세면 **기간을 변경한 예약이 대시보드에서 사라진다.**
+    호스트 입장에서는 오늘 나가는 손님이 화면에 없는 것이라 가장 나쁜
+    종류의 누락이다.
+
+    ⚠️ 14-36 이전에는 저장소 어느 집계 테스트도 `MODIFIED`가 **세어지는지**를
+    확인하지 않았다(상태 전이 테스트만 있었다).
+    """
+    prop, conn = await make_property(BookableUnitType.PROPERTY)
+    await _add_reservation(db, prop=prop, conn=conn, check_in=YESTERDAY, check_out=TODAY,
+                           status=ReservationStatus.MODIFIED)
+    await _add_reservation(db, prop=prop, conn=conn, check_in=TODAY, check_out=TOMORROW,
+                           status=ReservationStatus.MODIFIED)
+
+    s = await _summary(db, prop, host)
+    assert s.today_checkout_count == 1, "MODIFIED가 집계에서 빠졌다"
+    assert s.today_checkin_count == 1, "MODIFIED가 집계에서 빠졌다"
+    assert s.today_turnover_count == 1
+
+
+async def test_turnover_separates_null_and_non_null_units(db, host, make_property):
+    """🔴 **NULL 단위와 일반 단위가 섞여도 따로 세어진다.**
+
+    호스텔(`BED` 단위)에 **숙소 전체 예약**(`room_id` NULL)과 **침대 예약**이
+    함께 있는 경우다. iCal로 들어온 통대여 예약이 남아 있는 상황이 실제로
+    이 모양이다.
+
+        독채 단위 (NULL, NULL)  오늘 나가고 오늘 들어온다  → turnover
+        침대 단위 (room, bedA)  오늘 나가기만 한다        → turnover 아님
+
+    NULL 조합이 자기들끼리 묶이고 침대와 섞이지 않아야 **1**이 나온다.
+    등호 비교면 NULL 쪽이 흩어져 **0**이 된다.
+    """
+    prop, conn = await make_property(BookableUnitType.BED)
+    room = await db.scalar(select(Room).where(Room.property_id == prop.property_id))
+    bed_a = (
+        await db.scalar(
+            select(Bed).where(Bed.room_id == room.room_id).order_by(Bed.bed_label)
+        )
+    ).bed_id
+
+    # 숙소 전체 단위 — 오늘 나가고 오늘 들어온다
+    await _add_reservation(db, prop=prop, conn=conn, check_in=YESTERDAY, check_out=TODAY)
+    await _add_reservation(db, prop=prop, conn=conn, check_in=TODAY, check_out=TOMORROW)
+    # 침대 단위 — 오늘 나가기만 한다(대응하는 체크인이 없다)
+    await _add_reservation(db, prop=prop, conn=conn, room_id=room.room_id, bed_id=bed_a,
+                           check_in=YESTERDAY, check_out=TODAY)
+
+    s = await _summary(db, prop, host)
+
+    assert s.today_checkout_count == 2
+    assert s.today_checkin_count == 1
+    assert s.today_turnover_count == 1, (
+        "NULL 단위와 침대 단위가 섞였다 — NULL 조합이 자기들끼리 묶여야 한다"
+    )
 
 
 async def test_cancelled_reservation_is_not_counted(db, host, make_property):
