@@ -24,7 +24,12 @@
 
 - 독채 ↔ 객실 ↔ 침대 **교차 조합 전수**
 - **경계** — 체크아웃일과 다음 체크인일이 같은 날(연박 이어짐)
-- `PENDING` 등 비활성 상태가 제외되는지
+- `PENDING`(비활성 상태)이 두 경로 모두에서 제외되는지
+
+**덮지 않는 것 — DB가 실제로 거부하는가.** 여기서 넣는 조합은 `_add()`
+도크스트링대로 **EXCLUDE가 통과시키는 것들뿐**이라, 이 파일이 전부
+초록이어도 제약이 통째로 빠진 것을 알 수 없다. 그쪽은
+`test_exclude_constraint_behavior.py`가 본다(r54).
 """
 
 from __future__ import annotations
@@ -235,10 +240,24 @@ async def test_parity_on_boundary_dates(db: AsyncSession, bed_property):
 
 
 async def test_parity_excludes_inactive_status(db: AsyncSession, bed_property):
-    """`PENDING`·`CANCELLED`는 두 경로 **모두** 겹침으로 보지 않는다.
+    """`PENDING`이 두 경로 **모두**에서 겹침으로 보이지 않는지 본다.
 
-    `ACTIVE_STATUSES`가 `CONFIRMED`·`MODIFIED`뿐이라 EXCLUDE도 이 둘만
-    막는다 — 4.4절이 `is_conflict`에서 `PENDING`을 뺀 근거다.
+    🔴 **`CANCELLED`는 여기서 보지 않는다** (9/14 정정 — 도크스트링은 둘을
+    적었는데 본문은 `PENDING`만 넣고 있었다). **본문이 맞다.**
+
+    두 경로는 `ACTIVE_STATUSES`(`reservation_service.py:54`) **하나를 같이
+    읽는다** — SQL 경로가 `.in_(ACTIVE_STATUSES)`, 메모리 경로가
+    `not in ACTIVE_STATUSES`다. 상태 목록이 두 경로에서 갈리는 일이
+    **구조적으로 불가능**하므로, 상태를 하나 더 넣어도 이 파일이 보려는
+    *"두 경로가 갈렸는가"*에 대한 판별력이 늘지 않는다.
+
+    ⚠️ **따로 확인해야 하는 상태 목록은 DB 쪽에 있다.** EXCLUDE의
+    `WHERE reservation_status IN ('CONFIRMED','MODIFIED')`는
+    `models/reservation.py`에 **SQL 문자열로 따로 쓰인** 목록이라 이 상수와
+    갈릴 수 있다. 그쪽은 `test_exclude_constraint_behavior.py`가
+    `CANCELLED`·`PENDING` 둘 다로 확인한다(r54).
+
+    4.4절이 `is_conflict`에서 `PENDING`을 뺀 근거가 이 테스트다.
     """
     ctx = bed_property
     confirmed = await _add(db, ctx, room_id=ctx["room_101"], bed_id=None,
