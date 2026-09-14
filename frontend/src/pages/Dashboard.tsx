@@ -12,6 +12,8 @@
 
 import { Link } from "react-router-dom";
 
+import EmptyState from "@/components/state/EmptyState";
+import Loading from "@/components/state/Loading";
 import { useAppOutletContext } from "@/hooks/useAppOutletContext";
 import { useDashboardSummary } from "@/hooks/useDashboardSummary";
 import type { DashboardSummary, PropertyFetchState } from "@/types/ui";
@@ -66,30 +68,10 @@ function SignalRow({ summary }: { summary: DashboardSummary }) {
   );
 }
 
-/**
- * 재시도 버튼 — 실패한 숙소 카드에만 나타난다.
- *
- * **전체 재시도 버튼은 만들지 않는다.** 성공한 숙소를 다시 부를 이유가
- * 없고, 훅의 `refetchProperty(id)`도 지정한 숙소만 재호출한다.
- */
-function RetryButton({
-  onRetry,
-  disabled,
-}: {
-  onRetry: () => void;
-  disabled: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onRetry}
-      disabled={disabled}
-      className="mt-2 rounded border border-gray-400 px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {disabled ? "다시 시도 중…" : "다시 시도"}
-    </button>
-  );
-}
+/* [r58] `RetryButton`을 지웠다 — `EmptyState`의 `action={{kind:"retry"}}`가
+   같은 버튼을 낸다. **전체 재시도 버튼은 여전히 만들지 않는다**: 성공한
+   숙소를 다시 부를 이유가 없고, 훅의 `refetchProperty(id)`도 지정한
+   숙소만 재호출한다. */
 
 function PropertyCard({
   name,
@@ -104,8 +86,17 @@ function PropertyCard({
     return (
       <div className="rounded border border-gray-300 p-4">
         <div className="font-semibold">{name}</div>
-        <div className="mt-2 text-sm text-gray-700">불러오지 못했습니다</div>
-        <RetryButton onRetry={onRetry} disabled={false} />
+        <div className="mt-2">
+          {/* [r58] 설명 한 줄이 새로 붙었다 — 네 곳 중 이 카드만 없었다.
+              EmptyState가 description을 받으므로 빈 채로 두면 오히려
+              이 자리만 다른 모양이 된다. */}
+          <EmptyState
+            tone="error"
+            title="불러오지 못했습니다"
+            description="이 숙소만 실패했습니다. 나머지 숙소는 정상입니다."
+            action={{ kind: "retry", onRetry }}
+          />
+        </div>
       </div>
     );
   }
@@ -117,10 +108,13 @@ function PropertyCard({
     return (
       <div className="rounded border border-gray-300 p-4">
         <div className="font-semibold">{name}</div>
-        <div className="mt-2 text-sm text-gray-500">
-          {isRetrying ? "다시 불러오는 중…" : "불러오는 중…"}
+        <div className="mt-2">
+          {/* [r58] 재시도 중에 띄우던 **비활성 재시도 버튼을 뺐다.**
+              누를 수 없는 버튼이고, `Loading`의 "다시 불러오는 중…"이
+              같은 것을 이미 말한다. 레이아웃 유지만을 위해 죽은 컨트롤을
+              남기는 것이 네 곳이 갈린 원인이기도 했다. */}
+          <Loading label="현황" retrying={isRetrying} />
         </div>
-        {isRetrying && <RetryButton onRetry={onRetry} disabled />}
       </div>
     );
   }
@@ -153,17 +147,24 @@ export default function Dashboard() {
   const vm = useDashboardSummary(propertyList);
 
   if (vm.status === "loading") {
-    return <div className="p-6 text-gray-600">불러오는 중…</div>;
+    return (
+      <div className="p-6">
+        <Loading label="숙소 목록" />
+      </div>
+    );
   }
 
   if (vm.status === "error") {
     return (
       <div className="p-6">
-        <div className="font-semibold">숙소 목록을 불러오지 못했습니다</div>
-        <p className="mt-2 text-sm text-gray-700">
-          목록을 받지 못하면 숙소별 현황을 조회할 수 없습니다. 잠시 후 다시
-          시도해 주세요.
-        </p>
+        {/* 🔴 [r58] **재시도 버튼이 새로 붙었다.** 네 곳 중 여기에만
+            없었다 — 기능 누락이지 다른 설계가 아니었다(devlog 9/14). */}
+        <EmptyState
+          tone="error"
+          title="숙소 목록을 불러오지 못했습니다"
+          description="목록을 받지 못하면 숙소별 현황을 조회할 수 없습니다."
+          action={{ kind: "retry", onRetry: propertyList.reload }}
+        />
       </div>
     );
   }
@@ -171,16 +172,16 @@ export default function Dashboard() {
   if (vm.status === "empty") {
     return (
       <div className="p-6">
-        <div className="font-semibold">첫 숙소를 등록해 주세요</div>
-        <p className="mt-2 text-sm text-gray-700">
-          숙소를 등록하면 오늘 처리할 일이 여기에 모입니다.
-        </p>
-        <Link
-          to="/onboarding"
-          className="mt-4 inline-block rounded border border-gray-400 px-4 py-2 text-sm"
-        >
-          숙소 등록하러 가기 →
-        </Link>
+        <EmptyState
+          tone="empty"
+          title="첫 숙소를 등록해 주세요"
+          description="숙소를 등록하면 오늘 처리할 일이 여기에 모입니다."
+          action={{
+            kind: "link",
+            to: "/onboarding",
+            label: "숙소 등록하러 가기 →",
+          }}
+        />
       </div>
     );
   }

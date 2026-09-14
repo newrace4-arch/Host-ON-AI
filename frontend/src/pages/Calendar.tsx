@@ -30,6 +30,8 @@
 import { useMemo, useState } from "react";
 
 import PropertyScopeGate from "@/components/PropertyScopeGate";
+import EmptyState from "@/components/state/EmptyState";
+import Loading from "@/components/state/Loading";
 import { useAppOutletContext } from "@/hooks/useAppOutletContext";
 import { useCalendarData, type RoomRow } from "@/hooks/useCalendarData";
 import { useSelectedProperty } from "@/hooks/useSelectedProperty";
@@ -231,22 +233,19 @@ function CalendarBody({ property }: { property: Property }) {
 
       {/* ── 행 구성 ─────────────────────────────────────────────── */}
       {data.layoutStatus === "loading" && (
-        <p className="mt-4 text-sm text-gray-600">객실 구성 불러오는 중…</p>
+        <div className="mt-4">
+          <Loading label="객실 구성" />
+        </div>
       )}
 
       {data.layoutStatus === "error" && (
         <div className="mt-4">
-          <p className="text-sm text-gray-700">객실 구성을 불러오지 못했습니다</p>
-          <p className="mt-1 text-sm text-gray-600">
-            객실 목록이 없으면 어느 줄에 예약을 놓을지 정할 수 없습니다.
-          </p>
-          <button
-            type="button"
-            onClick={data.reloadLayout}
-            className="mt-2 rounded border border-gray-400 px-3 py-1 text-sm"
-          >
-            다시 시도
-          </button>
+          <EmptyState
+            tone="error"
+            title="객실 구성을 불러오지 못했습니다"
+            description="객실 목록이 없으면 어느 줄에 예약을 놓을지 정할 수 없습니다."
+            action={{ kind: "retry", onRetry: data.reloadLayout }}
+          />
         </div>
       )}
 
@@ -254,44 +253,39 @@ function CalendarBody({ property }: { property: Property }) {
       {data.layoutStatus === "success" && (
         <>
           {data.listStatus === "loading" && (
-            <p className="mt-4 text-sm text-gray-600">
-              {label} 예약 불러오는 중…
-            </p>
+            <div className="mt-4">
+              <Loading label={`${label} 예약`} />
+            </div>
           )}
 
           {data.listStatus === "error" && (
             <div className="mt-4">
-              <p className="text-sm text-gray-700">
-                {label} 예약을 불러오지 못했습니다
-              </p>
-              <p className="mt-1 text-sm text-gray-600">
-                객실 구성은 정상입니다. 예약만 다시 받으면 됩니다.
-              </p>
-              <button
-                type="button"
-                onClick={data.reloadList}
-                className="mt-2 rounded border border-gray-400 px-3 py-1 text-sm"
-              >
-                다시 시도
-              </button>
+              <EmptyState
+                tone="error"
+                title={`${label} 예약을 불러오지 못했습니다`}
+                description="객실 구성은 정상입니다. 예약만 다시 받으면 됩니다."
+                action={{ kind: "retry", onRetry: data.reloadList }}
+              />
             </div>
           )}
 
           {data.listStatus === "success" && data.reservations.length === 0 && (
-            // EmptyState 3요소(원인 / 다음 행동 / 링크) — ui_design 5-9절.
+            // [r58] 3요소를 `EmptyState`가 강제한다 — ui_design 5-9절.
             //   문구는 4-5절이 정한 것을 쓴다.
+            //   ⚠️ `<a href>`가 `<Link to>`로 바뀐다. 기존 `<a>`는 전체
+            //     리로드라 앱 상태가 통째로 날아갔다(SPA에서 의도치 않은
+            //     동작). 이동은 라우팅이 맞다.
             <div className="mt-4">
-              <p className="text-sm text-gray-700">이 기간에 예약이 없습니다</p>
-              <p className="mt-1 text-sm text-gray-600">
-                빈 날짜를 클릭해 예약을 추가하세요. 아직 채널을 연동하지
-                않았다면 먼저 연동하는 편이 빠릅니다.
-              </p>
-              <a
-                href={`/settings?property=${property.property_id}`}
-                className="mt-2 inline-block rounded border border-gray-400 px-3 py-1 text-sm"
-              >
-                채널 연동하러 가기 →
-              </a>
+              <EmptyState
+                tone="empty"
+                title="이 기간에 예약이 없습니다"
+                description="빈 날짜를 클릭해 예약을 추가하세요. 아직 채널을 연동하지 않았다면 먼저 연동하는 편이 빠릅니다."
+                action={{
+                  kind: "link",
+                  to: `/settings?property=${property.property_id}`,
+                  label: "채널 연동하러 가기 →",
+                }}
+              />
             </div>
           )}
 

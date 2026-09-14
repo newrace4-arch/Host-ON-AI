@@ -10,6 +10,7 @@
 
 import { useNavigate } from "react-router-dom";
 
+import Loading from "@/components/state/Loading";
 import { useSelectedProperty } from "@/hooks/useSelectedProperty";
 import type { PropertyListState } from "@/types/ui";
 
@@ -24,13 +25,20 @@ export default function PropertySwitcher({
   const navigate = useNavigate();
   const { propertyId, notice, dismissNotice, select } = useSelectedProperty(list);
 
+  // ⚠️ **헤더는 `EmptyState`를 쓰지 않는다.** 3요소(원인·다음 행동·링크)를
+  //   한 줄짜리 헤더 칸에 넣을 자리가 없고, 여기서 [다시 시도]를 두면
+  //   같은 화면에 재시도 버튼이 둘(헤더 + 본문 `PropertyScopeGate`)이 된다.
+  //   본문 쪽이 원인과 다음 행동을 온전히 말하므로 헤더는 **상태만** 알린다.
+  //   `Loading`은 한 줄이라 그대로 쓴다.
   if (list.status === "loading") {
-    return <span className="text-sm text-gray-500">숙소 불러오는 중…</span>;
+    return <Loading label="숙소" />;
   }
 
   if (list.status === "error") {
     return (
-      <span className="text-sm text-gray-700">숙소 목록을 불러오지 못했습니다</span>
+      <span className="text-sm font-medium text-red-800">
+        숙소 목록을 불러오지 못했습니다
+      </span>
     );
   }
 
