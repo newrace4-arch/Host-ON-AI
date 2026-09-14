@@ -87,6 +87,30 @@ class ImmutableFieldError(AppError):
     code = "IMMUTABLE_FIELD"
 
 
+class InvalidStatusTransitionError(AppError):
+    """허용되지 않는 상태 전이 또는 무의미한 조합(400, api_contract 4.6절).
+
+    두 상황을 **한 코드로 묶는다** —
+
+      ① `state_events.md` 1절 전이도에 없는 전이
+         (예: `CANCELLED` → `CONFIRMED`)
+      ② 무의미한 조합
+         (예: `reservation_status=CANCELLED`인데 `refund_status=NONE`)
+
+    둘 다 *"값 자체는 유효한데 지금 상태에서는 불가"*이고, 프론트는
+    어느 쪽이든 **현재 상태를 다시 읽어 선택지를 줄여야** 한다 —
+    나눌 이유가 없다.
+
+    ⚠️ `VALIDATION_ERROR`와 뜻이 다르다. 그쪽은 *"형식이 틀렸다"*라
+    고쳐서 다시 보내면 되지만, 이것은 **같은 값을 다시 보내도 된다**
+    — 먼저 다른 전이를 거쳐야 한다. `IMMUTABLE_FIELD`를 따로 둔 것과
+    같은 기준이다(2.5절).
+    """
+
+    status_code = 400
+    code = "INVALID_STATUS_TRANSITION"
+
+
 class RoomNameAlreadyExistsError(AppError):
     """같은 숙소에 같은 `room_name`(409, api_contract 2.6절).
 

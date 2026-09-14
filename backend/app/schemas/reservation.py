@@ -72,4 +72,58 @@ class ReservationResponse(BaseModel):
     # ⚠️ 예약 건별 실수령액은 net_amount다. net_payout은 월정산 컬럼명이므로
     #    예약 응답에 쓰지 않는다(api_contract.md v1.6 정정).
     net_amount: int | None
-    is_conflict: bool = False
+    # 🔴 **기본값을 두지 않는다.** `= False`로 두면 계산을 빠뜨린 경로가
+    #   조용히 `false`를 내보낸다. 4.4절이 *"서버가 매 조회 시 계산"*
+    #   이라고 정했으므로, 필수로 두어 **채우지 않은 경로가 그 자리에서
+    #   드러나게** 한다(봉투 `data`를 required로 둔 것과 같은 이유).
+    is_conflict: bool
+
+    @classmethod
+    def from_model(cls, r, *, is_conflict: bool) -> "ReservationResponse":
+        """ORM 객체 + 파생 필드 → 응답 DTO.
+
+        `model_validate(r)`을 쓸 수 없다 — `is_conflict`는 **DB 컬럼이
+        아니라** 서버가 계산하는 값이라 ORM 객체에 없다. 응답 생성
+        경로를 이 하나로 묶어 두면 계산을 빠뜨릴 자리가 없다
+        (`ChannelConnectionResponse.from_model`과 같은 이유).
+        """
+        return cls(
+            reservation_id=r.reservation_id,
+            property_id=r.property_id,
+            room_id=r.room_id,
+            bed_id=r.bed_id,
+            channel_connection_id=r.channel_connection_id,
+            guest_name=r.guest_name,
+            check_in=r.check_in,
+            check_out=r.check_out,
+            reservation_status=r.reservation_status,
+            refund_status=r.refund_status,
+            financial_status=r.financial_status,
+            gross_amount=r.gross_amount,
+            fee_amount=r.fee_amount,
+            net_amount=r.net_amount,
+            is_conflict=is_conflict,
+        )
+
+
+class ReservationStatusUpdateRequest(BaseModel):
+    """`PATCH /reservations/{id}/status` 요청 (api_contract 4.6절).
+
+    **3필드 전부 Optional이다.** 보낸 필드만 바뀌고 보내지 않은 필드는
+    그대로 둔다 — "보냈는지"는 `model_fields_set`으로 본다
+    (`PropertyUpdateRequest`와 같은 패턴).
+
+    엔드포인트를 3개로 쪼개지 않은 이유는 4.6절에 있다 — **환불+취소
+    동시처리 시 트랜잭션이 2번 발생해 오히려 비효율**이다.
+
+    **빈 본문(`{}`)은 에러가 아니다.** 바꿀 것이 없다는 뜻이므로 현재
+    상태를 그대로 200으로 돌려준다(2.5절과 같은 규약).
+
+    ⚠️ 세 상태는 **서로 독립 전이**다(state_events 1절 주석). 여기서
+    함께 받는 것은 한 트랜잭션으로 묶기 위함이지 셋이 연동된다는
+    뜻이 아니다.
+    """
+
+    reservation_status: ReservationStatus | None = None
+    refund_status: RefundStatus | None = None
+    financial_status: FinancialStatus | None = None

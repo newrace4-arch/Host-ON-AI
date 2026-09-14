@@ -305,7 +305,11 @@ async def test_response_carries_db_computed_net_amount(
     await db.commit()
     await db.refresh(reservation)
 
-    body = ReservationResponse.model_validate(reservation).model_dump()
+    # [9/14] `is_conflict`가 필수가 되면서 `model_validate`로는 만들 수 없다 —
+    #   DB 컬럼이 아니라 서버가 계산하는 파생 필드라 ORM 객체에 없기 때문이다.
+    #   기본값을 없앤 것이 의도한 결과다(계산을 빠뜨린 경로가 드러난다).
+    #   이 테스트가 보는 것은 net_amount이므로 충돌 여부는 False로 고정한다.
+    body = ReservationResponse.from_model(reservation, is_conflict=False).model_dump()
 
     assert body["net_amount"] is not None
     assert body["net_amount"] == body["gross_amount"] - body["fee_amount"] == NET
