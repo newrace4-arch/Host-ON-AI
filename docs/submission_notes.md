@@ -129,7 +129,7 @@
   - 발표에서 할 말: 검증기가 망가진 것을 결과를 보고 나서야 아는 상황을 막으려고, 답을 아는 회귀 문제를 스크립트 안에 넣었다.
 
 - **[기준선을 파일로 저장하고 도구가 읽는다]** 제약 개수·OpenAPI 스펙을 사람이 기억한 숫자가 아니라 파일 기준선으로 대조한다.
-  - 근거: `tools/dump_constraints.py`(`--baseline`·`--expect-added`), `tools/dump_openapi.py`, `.backup/constraints_baseline_20260913_v14.txt`, CLAUDE.md 「숫자를 쓰는 방식」
+  - 근거: `tools/dump_constraints.py`(`--baseline`·`--expect-added`), `tools/dump_openapi.py`, `backend/tests/snapshots/constraints_baseline_20260913_v14.txt`, CLAUDE.md 「숫자를 쓰는 방식」
   - 발표에서 할 말: 9/13에 기억으로 쓴 숫자가 세 번 틀렸다(회귀 기준선 149 → 실제 137, 제약 39 → 실제 40, 영향 범위 과장). 그 뒤로 기준선은 파일에서 읽는다.
 
 ### 3-B. 런타임 결함

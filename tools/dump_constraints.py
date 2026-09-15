@@ -72,7 +72,14 @@ WHERE n.nspname = 'public'
 ORDER BY c.relname, con.contype, con.conname;
 """ % EXCLUDE_TABLE
 
-SELFTEST_BASELINE = os.path.join(".backup", "constraints_baseline_20260912.txt")
+# 9/15: `.backup/`(비추적) → `backend/tests/snapshots/`(추적)로 옮겼다.
+#   검증 자산은 코드와 같은 이력을 따라야 한다(dump_openapi 도크스트링과 같은 근거).
+# 🔴 **파일은 9/12판(40건) 그대로 둔다.** v14(50건)로 바꾸면 아래 ④
+#   "정의만 변경" 케이스가 원리상 성립하지 않는다 — v14에는 바꿀 정의
+#   (uq_property_channel의 NULLS NOT DISTINCT)가 **이미 들어 있어** 바꿔도
+#   그대로다. 고정 케이스는 낡은 것이 조건이다.
+SELFTEST_BASELINE = os.path.join(
+    "backend", "tests", "snapshots", "constraints_baseline_20260912.txt")
 EXPECT_SELFTEST_ROWS = 40
 EXPECT_SELFTEST_CONTYPE = {"f": 21, "u": 13, "c": 3, "x": 3}
 

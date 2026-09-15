@@ -3,7 +3,7 @@
 ## 왜 이 파일이 따로 필요한가
 
 제약은 9/5(`a457074`)에 마이그레이션으로 들어갔고 실제 DB에 걸려 있는 것도
-제약 기준선(`.backup/constraints_baseline_20260913_v14.txt`)에 고정돼 있다.
+제약 기준선(`backend/tests/snapshots/constraints_baseline_20260913_v14.txt`)에 고정돼 있다.
 **그런데 그것이 정말 INSERT를 거부하는지는 한 번도 실행으로 확인된 적이
 없었다**(9/14 조사) — 저장소 전체에서 EXCLUDE 위반을 일으키는 테스트가
 **0건**이었다.

@@ -1,0 +1,40 @@
+action_items|action_items_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+action_items|fk_action_items_reservation_property|f|FOREIGN KEY (reservation_id, property_id) REFERENCES reservations(reservation_id, property_id) ON DELETE SET NULL (reservation_id)
+beds|beds_room_id_fkey|f|FOREIGN KEY (room_id) REFERENCES rooms(room_id) ON DELETE CASCADE
+beds|uq_bed_room_ref|u|UNIQUE (bed_id, room_id)
+beds|uq_room_bed_label|u|UNIQUE (room_id, bed_label)
+channel_connections|channel_connections_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+channel_connections|uq_channel_connection_property_ref|u|UNIQUE (connection_id, property_id)
+channel_connections|uq_property_channel|u|UNIQUE (property_id, channel)
+checklist_items|ck_checklist_items_renewal_expiry|c|CHECK ((((renewal_trigger_type = 'NONE'::renewal_trigger_type_enum) AND (expiry_date IS NULL)) OR ((renewal_trigger_type = 'EXPIRATION_BASED'::renewal_trigger_type_enum) AND (expiry_date IS NOT NULL)) OR (renewal_trigger_type = 'EVENT_BASED'::renewal_trigger_type_enum)))
+checklist_items|checklist_items_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+cleaning_tasks|fk_cleaning_tasks_reservation_property|f|FOREIGN KEY (reservation_id, property_id) REFERENCES reservations(reservation_id, property_id) ON DELETE CASCADE
+cleaning_tasks|cleaning_tasks_reservation_id_key|u|UNIQUE (reservation_id)
+financial_configs|financial_configs_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+financial_configs|financial_configs_property_id_key|u|UNIQUE (property_id)
+hosts|hosts_email_key|u|UNIQUE (email)
+inquiries|fk_inquiries_reservation_property|f|FOREIGN KEY (reservation_id, property_id) REFERENCES reservations(reservation_id, property_id) ON DELETE CASCADE
+inquiries|inquiries_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+inquiry_approvals|inquiry_approvals_approved_by_fkey|f|FOREIGN KEY (approved_by) REFERENCES hosts(host_id)
+inquiry_approvals|inquiry_approvals_response_id_fkey|f|FOREIGN KEY (response_id) REFERENCES inquiry_responses(response_id) ON DELETE CASCADE
+inquiry_classifications|inquiry_classifications_inquiry_id_fkey|f|FOREIGN KEY (inquiry_id) REFERENCES inquiries(inquiry_id) ON DELETE CASCADE
+inquiry_classifications|inquiry_classifications_inquiry_id_key|u|UNIQUE (inquiry_id)
+inquiry_responses|inquiry_responses_inquiry_id_fkey|f|FOREIGN KEY (inquiry_id) REFERENCES inquiries(inquiry_id) ON DELETE CASCADE
+knowledge_chunks|knowledge_chunks_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+monthly_settlements|monthly_settlements_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+monthly_settlements|uq_settlement_property_month|u|UNIQUE (property_id, target_month)
+properties|properties_host_id_fkey|f|FOREIGN KEY (host_id) REFERENCES hosts(host_id) ON DELETE CASCADE
+reservations|ck_reservations_date_order|c|CHECK ((check_out > check_in))
+reservations|ck_reservations_unit_shape|c|CHECK ((((room_id IS NULL) AND (bed_id IS NULL)) OR ((room_id IS NOT NULL) AND (bed_id IS NULL)) OR ((room_id IS NOT NULL) AND (bed_id IS NOT NULL))))
+reservations|fk_reservations_bed_room|f|FOREIGN KEY (bed_id, room_id) REFERENCES beds(bed_id, room_id)
+reservations|fk_reservations_channel_property|f|FOREIGN KEY (channel_connection_id, property_id) REFERENCES channel_connections(connection_id, property_id)
+reservations|fk_reservations_room_property|f|FOREIGN KEY (room_id, property_id) REFERENCES rooms(room_id, property_id)
+reservations|reservations_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+reservations|uq_reservation_channel_uid|u|UNIQUE (channel_connection_id, external_uid)
+reservations|uq_reservation_property_ref|u|UNIQUE (reservation_id, property_id)
+reservations|excl_bed_overlap|x|EXCLUDE USING gist (bed_id WITH =, tsrange((check_in)::timestamp without time zone, (check_out)::timestamp without time zone) WITH &&) WHERE (((bed_id IS NOT NULL) AND (reservation_status = ANY (ARRAY['CONFIRMED'::reservation_status_enum, 'MODIFIED'::reservation_status_enum]))))
+reservations|excl_property_overlap|x|EXCLUDE USING gist (property_id WITH =, tsrange((check_in)::timestamp without time zone, (check_out)::timestamp without time zone) WITH &&) WHERE (((room_id IS NULL) AND (bed_id IS NULL) AND (reservation_status = ANY (ARRAY['CONFIRMED'::reservation_status_enum, 'MODIFIED'::reservation_status_enum]))))
+reservations|excl_room_overlap|x|EXCLUDE USING gist (room_id WITH =, tsrange((check_in)::timestamp without time zone, (check_out)::timestamp without time zone) WITH &&) WHERE (((room_id IS NOT NULL) AND (bed_id IS NULL) AND (reservation_status = ANY (ARRAY['CONFIRMED'::reservation_status_enum, 'MODIFIED'::reservation_status_enum]))))
+rooms|rooms_property_id_fkey|f|FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE
+rooms|uq_property_room_name|u|UNIQUE (property_id, room_name)
+rooms|uq_room_property_ref|u|UNIQUE (room_id, property_id)
