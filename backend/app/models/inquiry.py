@@ -74,6 +74,15 @@ class Inquiry(Base):
         BigInteger, ForeignKey("properties.property_id", ondelete="CASCADE"), nullable=False
     )
     channel: Mapped[str | None] = mapped_column(String(30))
+    # [S2 9/15] 호스트가 입력하는 **표시명**이다. 이 앱은 게스트 대면 채널을
+    #   두지 않으므로(ui_design 「게스트 대면 채널을 만들지 않는다」) 문의를
+    #   넣는 주체가 호스트이고, 담을 수 있는 식별자도 호스트가 쓰는 이름뿐이다.
+    #   🔴 **PII가 아니다** — 전화·이메일·여권·카드번호를 담지 않는다. 다만
+    #     RESERVATIONS.guest_name과 같은 등급이므로 **Claude 프롬프트에는 넣지
+    #     않는다**(코딩규칙 12). mask_pii 구현 시(N4) 제외 목록에 함께 넣을 것.
+    #   ⚠️ 동일인 판정에는 쓸 수 없다(표기가 흔들린다). OTA가 주는 스레드
+    #     식별자는 iCal이 제공하지 않아 채울 출처가 없다(9/10 규칙).
+    guest_label: Mapped[str | None] = mapped_column(String(100))
     # ⚠️ 원본은 그대로 저장한다(호스트는 원본을 봐야 함). Claude로 나가는
     #   텍스트에만 mask_pii()를 적용한다(CLAUDE.md 코딩규칙 12번).
     message: Mapped[str] = mapped_column(Text, nullable=False)
