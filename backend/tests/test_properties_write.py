@@ -17,6 +17,7 @@ import uuid
 from datetime import time
 
 import pytest
+import pytest_asyncio
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +35,7 @@ pytestmark = pytest.mark.asyncio
 
 
 # ---------------------------------------------------------------------------
-# 지역 헬퍼 — conftest는 고치지 않는다
+# 픽스처·지역 헬퍼 — conftest는 고치지 않는다
 # ---------------------------------------------------------------------------
 
 _MINIMAL = {
@@ -44,16 +45,34 @@ _MINIMAL = {
 }
 
 
-async def _other_host(db: AsyncSession) -> Host:
-    other = Host(
-        email=f"other-{uuid.uuid4().hex[:12]}@test.local",
+@pytest_asyncio.fixture
+async def stranger(db: AsyncSession):
+    """남의 계정. IDOR 테스트는 **실재하는 타인**이 있어야 의미가 있다.
+
+    🔴 **teardown에서 지운다.** 9/14에 지역 헬퍼가 만든 `other-*` 호스트가
+    `conftest`의 정리 경로를 타지 않아 **전체 회귀 한 번마다 3건씩** 쌓였다
+    (9/15 실측 누적 175건). 형태는 `conftest.py`의 `host` 픽스처와 같다.
+
+    **접두사를 파일마다 다르게 두는 것은 의도다** — 누수가 다시 생기면 어느
+    파일이 남겼는지 이메일 접두사로 바로 가려낼 수 있다.
+    """
+    obj = Host(
+        email=f"propwrite-{uuid.uuid4().hex[:10]}@test.local",
         password_hash="not-a-real-hash",
         name="다른호스트",
     )
-    db.add(other)
+    db.add(obj)
     await db.commit()
-    await db.refresh(other)
-    return other
+    # rollback이 인스턴스 속성을 만료시켜 이후 obj.host_id 접근이 지연로딩(동기 IO)을
+    #   유발한다 → MissingGreenlet. conftest와 같은 이유로 id를 값으로 미리 뽑는다.
+    host_id = obj.host_id
+    yield obj
+
+    await db.rollback()
+    stored = await db.get(Host, host_id)
+    if stored is not None:
+        await db.delete(stored)   # properties → rooms → beds 까지 CASCADE
+        await db.commit()
 
 
 async def _create(db: AsyncSession, host_id: int, **overrides):
@@ -138,14 +157,13 @@ async def test_create_accepts_all_optional_fields(db: AsyncSession, host):
     assert body["holiday_adjustment_enabled"] is False
 
 
-async def test_create_owner_comes_from_auth_not_body(db: AsyncSession, host):
+async def test_create_owner_comes_from_auth_not_body(db: AsyncSession, host, stranger):
     """🔴 소유자는 **JWT에서** 온다. 본문의 `host_id`는 받지도 쓰지도 않는다.
 
     받으면 남의 id를 적어 보내는 순간 다른 호스트 앞으로 숙소가 생긴다.
     """
-    other = await _other_host(db)
     payload = PropertyCreateRequest.model_validate(
-        {**_MINIMAL, "host_id": other.host_id}  # 무시되어야 한다
+        {**_MINIMAL, "host_id": stranger.host_id}  # 무시되어야 한다
     )
     assert "host_id" not in payload.model_fields_set
 
@@ -380,10 +398,9 @@ async def test_patch_empty_body_returns_current_state(db: AsyncSession, host):
 # ---------------------------------------------------------------------------
 
 
-async def test_patch_other_host_property_is_404(db: AsyncSession, host):
+async def test_patch_other_host_property_is_404(db: AsyncSession, host, stranger):
     """🔴 남의 숙소는 **404**다 — 403도, `IMMUTABLE_FIELD` 400도 아니다(0절)."""
-    other = await _other_host(db)
-    theirs = await _create(db, other.host_id)
+    theirs = await _create(db, stranger.host_id)
     payload = PropertyUpdateRequest.model_validate({"name": "가로챈 이름"})
 
     with pytest.raises(ResourceNotFoundError):
@@ -392,15 +409,14 @@ async def test_patch_other_host_property_is_404(db: AsyncSession, host):
         )
 
 
-async def test_patch_checks_ownership_before_immutable_field(db: AsyncSession, host):
+async def test_patch_checks_ownership_before_immutable_field(db: AsyncSession, host, stranger):
     """🔴 **판정 순서** — 소유권(404)이 수정 불가 필드(400)보다 먼저다.
 
     반대로 하면 남의 숙소에 `accommodation_type`을 보냈을 때 400이 나가
     *"그 id는 존재한다"*가 새어 나간다. 9/13 `room_id` 404/400 분리에서 정한
     순서와 같다.
     """
-    other = await _other_host(db)
-    theirs = await _create(db, other.host_id)
+    theirs = await _create(db, stranger.host_id)
     payload = PropertyUpdateRequest.model_validate({"accommodation_type": "HOSTEL"})
 
     with pytest.raises(ResourceNotFoundError):

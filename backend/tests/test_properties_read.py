@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ResourceNotFoundError
@@ -33,21 +34,38 @@ pytestmark = pytest.mark.asyncio
 
 
 # ---------------------------------------------------------------------------
-# 지역 헬퍼 — conftest는 고치지 않는다
+# 픽스처·지역 헬퍼 — conftest는 고치지 않는다
 # ---------------------------------------------------------------------------
 
 
-async def _other_host(db: AsyncSession) -> Host:
-    """남의 계정. IDOR 테스트는 **실재하는 타인**이 있어야 의미가 있다."""
-    other = Host(
-        email=f"other-{uuid.uuid4().hex[:12]}@test.local",
+@pytest_asyncio.fixture
+async def stranger(db: AsyncSession):
+    """남의 계정. IDOR 테스트는 **실재하는 타인**이 있어야 의미가 있다.
+
+    🔴 **teardown에서 지운다.** 9/14에 지역 헬퍼가 만든 `other-*` 호스트가
+    `conftest`의 정리 경로를 타지 않아 **전체 회귀 한 번마다 4건씩** 쌓였다
+    (9/15 실측 누적 175건). 형태는 `conftest.py`의 `host` 픽스처와 같다.
+
+    **접두사를 파일마다 다르게 두는 것은 의도다** — 누수가 다시 생기면 어느
+    파일이 남겼는지 이메일 접두사로 바로 가려낼 수 있다.
+    """
+    obj = Host(
+        email=f"propread-{uuid.uuid4().hex[:10]}@test.local",
         password_hash="not-a-real-hash",
         name="다른호스트",
     )
-    db.add(other)
+    db.add(obj)
     await db.commit()
-    await db.refresh(other)
-    return other
+    # rollback이 인스턴스 속성을 만료시켜 이후 obj.host_id 접근이 지연로딩(동기 IO)을
+    #   유발한다 → MissingGreenlet. conftest와 같은 이유로 id를 값으로 미리 뽑는다.
+    host_id = obj.host_id
+    yield obj
+
+    await db.rollback()
+    stored = await db.get(Host, host_id)
+    if stored is not None:
+        await db.delete(stored)   # properties → rooms → beds 까지 CASCADE
+        await db.commit()
 
 
 async def _bare_property(
@@ -148,11 +166,10 @@ async def test_new_property_defaults_mean_unset(db: AsyncSession, host):
 # ---------------------------------------------------------------------------
 
 
-async def test_list_properties_returns_only_my_properties(db: AsyncSession, host):
+async def test_list_properties_returns_only_my_properties(db: AsyncSession, host, stranger):
     """남의 숙소는 목록에 섞이지 않는다."""
     mine = await _bare_property(db, host.host_id, unit=BookableUnitType.PROPERTY)
-    other = await _other_host(db)
-    await _bare_property(db, other.host_id, unit=BookableUnitType.PROPERTY)
+    await _bare_property(db, stranger.host_id, unit=BookableUnitType.PROPERTY)
 
     props = await property_service.list_properties(db, host_id=host.host_id)
 
@@ -169,13 +186,12 @@ async def test_list_properties_empty_is_not_an_error(db: AsyncSession, host):
 # ---------------------------------------------------------------------------
 
 
-async def test_detail_of_other_host_property_is_404(db: AsyncSession, host):
+async def test_detail_of_other_host_property_is_404(db: AsyncSession, host, stranger):
     """🔴 남의 숙소는 **403이 아니라 404**다(0절).
 
     403을 쓰면 id를 1씩 올려가며 어떤 id가 실재하는지 알아낼 수 있다.
     """
-    other = await _other_host(db)
-    theirs = await _bare_property(db, other.host_id, unit=BookableUnitType.PROPERTY)
+    theirs = await _bare_property(db, stranger.host_id, unit=BookableUnitType.PROPERTY)
 
     with pytest.raises(ResourceNotFoundError):
         await property_service.get_property_detail(
@@ -231,10 +247,9 @@ async def test_rooms_are_ordered_by_id(db: AsyncSession, host):
     assert [r.room_id for r in rooms] == sorted(r.room_id for r in rooms)
 
 
-async def test_rooms_of_other_host_property_is_404(db: AsyncSession, host):
+async def test_rooms_of_other_host_property_is_404(db: AsyncSession, host, stranger):
     """남의 숙소 객실 목록은 빈 배열이 아니라 404다."""
-    other = await _other_host(db)
-    theirs = await _bare_property(db, other.host_id, unit=BookableUnitType.ROOM)
+    theirs = await _bare_property(db, stranger.host_id, unit=BookableUnitType.ROOM)
     db.add(Room(property_id=theirs.property_id, room_name="101호"))
     await db.commit()
 
@@ -279,7 +294,7 @@ async def test_beds_of_my_room_without_beds_is_empty(db: AsyncSession, host):
     )
 
 
-async def test_beds_of_other_host_room_is_404(db: AsyncSession, host):
+async def test_beds_of_other_host_room_is_404(db: AsyncSession, host, stranger):
     """🔴 남의 객실은 **빈 배열이 아니라 404**다(2.2절).
 
     이것이 이 테스트 파일에서 가장 중요한 한 건이다. 객실 소유권을 먼저
@@ -288,8 +303,7 @@ async def test_beds_of_other_host_room_is_404(db: AsyncSession, host):
     된다 — 그 순간 이 엔드포인트는 남의 객실 id 공간을 탐색하는 도구가
     된다.
     """
-    other = await _other_host(db)
-    theirs = await _bare_property(db, other.host_id, unit=BookableUnitType.BED)
+    theirs = await _bare_property(db, stranger.host_id, unit=BookableUnitType.BED)
     room = Room(property_id=theirs.property_id, room_name="도미토리")
     db.add(room)
     await db.commit()

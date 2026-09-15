@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,20 +41,38 @@ pytestmark = pytest.mark.asyncio
 
 
 # ---------------------------------------------------------------------------
-# 지역 헬퍼 — conftest는 고치지 않는다
+# 픽스처·지역 헬퍼 — conftest는 고치지 않는다
 # ---------------------------------------------------------------------------
 
 
-async def _other_host(db: AsyncSession) -> Host:
-    other = Host(
-        email=f"other-{uuid.uuid4().hex[:12]}@test.local",
+@pytest_asyncio.fixture
+async def stranger(db: AsyncSession):
+    """남의 계정. IDOR 테스트는 **실재하는 타인**이 있어야 의미가 있다.
+
+    🔴 **teardown에서 지운다.** 9/14에 지역 헬퍼가 만든 `other-*` 호스트가
+    `conftest`의 정리 경로를 타지 않아 **전체 회귀 한 번마다 2건씩** 쌓였다
+    (9/15 실측 누적 175건). 형태는 `conftest.py`의 `host` 픽스처와 같다.
+
+    **접두사를 파일마다 다르게 두는 것은 의도다** — 누수가 다시 생기면 어느
+    파일이 남겼는지 이메일 접두사로 바로 가려낼 수 있다.
+    """
+    obj = Host(
+        email=f"roomsbeds-{uuid.uuid4().hex[:10]}@test.local",
         password_hash="not-a-real-hash",
         name="다른호스트",
     )
-    db.add(other)
+    db.add(obj)
     await db.commit()
-    await db.refresh(other)
-    return other
+    # rollback이 인스턴스 속성을 만료시켜 이후 obj.host_id 접근이 지연로딩(동기 IO)을
+    #   유발한다 → MissingGreenlet. conftest와 같은 이유로 id를 값으로 미리 뽑는다.
+    host_id = obj.host_id
+    yield obj
+
+    await db.rollback()
+    stored = await db.get(Host, host_id)
+    if stored is not None:
+        await db.delete(stored)   # properties → rooms → beds 까지 CASCADE
+        await db.commit()
 
 
 async def _prop(db: AsyncSession, host_id: int, unit: BookableUnitType) -> Property:
@@ -202,10 +221,9 @@ async def test_capacity_zero_or_negative_is_validation_error(db: AsyncSession, b
         RoomCreateRequest.model_validate({"room_name": "101호", "capacity": bad})
 
 
-async def test_create_room_on_other_host_property_is_404(db: AsyncSession, host):
+async def test_create_room_on_other_host_property_is_404(db: AsyncSession, host, stranger):
     """남의 숙소에 객실 생성 → 404. 판매단위 400보다 **먼저** 판정된다."""
-    other = await _other_host(db)
-    theirs = await _prop(db, other.host_id, BookableUnitType.ROOM)
+    theirs = await _prop(db, stranger.host_id, BookableUnitType.ROOM)
     payload = RoomCreateRequest.model_validate({"room_name": "101호"})
 
     with pytest.raises(ResourceNotFoundError):
@@ -281,15 +299,14 @@ async def test_same_bed_label_in_different_room_is_ok(db: AsyncSession, host):
     assert bed2.bed_label == "A"
 
 
-async def test_create_bed_on_other_host_room_is_404(db: AsyncSession, host):
+async def test_create_bed_on_other_host_room_is_404(db: AsyncSession, host, stranger):
     """🔴 남의 객실에 침대 생성 → **404**.
 
     경로에 `property_id`가 없어, 객실에서 숙소를 역추적하지 않으면 이 요청이
     **그대로 성공한다.** 커밋 1의 `GET /rooms/{id}/beds`와 같은 조인이다.
     """
-    other = await _other_host(db)
-    theirs = await _prop(db, other.host_id, BookableUnitType.BED)
-    room = await _add_room(db, theirs.property_id, other.host_id, "도미토리")
+    theirs = await _prop(db, stranger.host_id, BookableUnitType.BED)
+    room = await _add_room(db, theirs.property_id, stranger.host_id, "도미토리")
     payload = BedCreateRequest.model_validate({"bed_label": "A"})
 
     with pytest.raises(ResourceNotFoundError):
